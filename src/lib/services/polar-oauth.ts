@@ -39,18 +39,13 @@ class PolarOAuthService {
         };
       }
 
-      // Get the current user
+      // Get the current user if signed in, or use a device-local ID
       const user = supabase.auth.getUser();
-      if (!user) {
-        return {
-          success: false,
-          error: 'Please sign in first to connect Polar.',
-        };
-      }
+      const userId = user?.id || await this.getOrCreateLocalUserId();
 
       // Build the OAuth URL with platform-specific redirect
       const appUrl = getAppUrl();
-      const polarOAuthUrl = this.buildOAuthUrl(user.id, appUrl);
+      const polarOAuthUrl = this.buildOAuthUrl(userId, appUrl);
 
       // Different flow for web vs native
       if (Platform.OS === 'web') {
@@ -65,6 +60,22 @@ class PolarOAuthService {
         error: error instanceof Error ? error.message : 'Failed to connect to Polar',
       };
     }
+  }
+
+  /**
+   * Gets or creates a local device ID for users who aren't signed in
+   */
+  private async getOrCreateLocalUserId(): Promise<string> {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    const STORAGE_KEY = 'polar_local_user_id';
+
+    let localId = await AsyncStorage.getItem(STORAGE_KEY);
+    if (!localId) {
+      // Generate a UUID-like ID
+      localId = 'local_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+      await AsyncStorage.setItem(STORAGE_KEY, localId);
+    }
+    return localId;
   }
 
   /**
@@ -245,14 +256,16 @@ class PolarOAuthService {
   async disconnectPolar(): Promise<{ success: boolean; error?: string }> {
     try {
       const user = supabase.auth.getUser();
-      if (!user) {
-        return { success: false, error: 'Not signed in' };
+      const userId = user?.id || await this.getLocalUserId();
+
+      if (!userId) {
+        return { success: true }; // Nothing to disconnect
       }
 
       // Delete the OAuth tokens from Supabase
       const { error } = await supabase
         .from('oauth_tokens')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .eq('provider', 'polar')
         .delete();
 
@@ -270,17 +283,27 @@ class PolarOAuthService {
   }
 
   /**
+   * Gets the local user ID if it exists
+   */
+  private async getLocalUserId(): Promise<string | null> {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    return await AsyncStorage.getItem('polar_local_user_id');
+  }
+
+  /**
    * Checks if the user has Polar connected
    */
   async checkPolarConnection(): Promise<boolean> {
     try {
       const user = supabase.auth.getUser();
-      if (!user) return false;
+      const userId = user?.id || await this.getLocalUserId();
+
+      if (!userId) return false;
 
       const { data } = await supabase
         .from('oauth_tokens')
         .select('id')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .eq('provider', 'polar')
         .single()
         .execute<{ id: string }>();

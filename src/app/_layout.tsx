@@ -54,6 +54,8 @@ function RootLayoutNav({ colorScheme }: { colorScheme: 'light' | 'dark' | null |
         <Stack.Screen name="login" options={{ headerShown: false, presentation: 'modal' }} />
         <Stack.Screen name="signup" options={{ headerShown: false, presentation: 'modal' }} />
         <Stack.Screen name="forgot-password" options={{ headerShown: false, presentation: 'modal' }} />
+        <Stack.Screen name="edit-profile" options={{ headerShown: false, presentation: 'modal' }} />
+        <Stack.Screen name="workout/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="polar-callback" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>

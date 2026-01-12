@@ -1,7 +1,8 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { View } from 'react-native';
+import { View, Platform } from 'react-native';
 import { Home, Activity, Heart, Moon, Settings } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function TabBarIcon({ Icon, color, focused }: { Icon: React.ComponentType<{ size: number; color: string; strokeWidth?: number }>; color: string; focused: boolean }) {
   return (
@@ -12,6 +13,16 @@ function TabBarIcon({ Icon, color, focused }: { Icon: React.ComponentType<{ size
 }
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+
+  // On web (especially iOS Safari), we need to respect the safe area for the home indicator
+  const bottomPadding = Platform.OS === 'web'
+    ? Math.max(insets.bottom, 20) + 8
+    : 28;
+  const tabBarHeight = Platform.OS === 'web'
+    ? 57 + Math.max(insets.bottom, 20) + 8
+    : 85;
+
   return (
     <Tabs
       screenOptions={{
@@ -20,9 +31,9 @@ export default function TabLayout() {
           backgroundColor: '#0D0D0F',
           borderTopColor: '#2E2E33',
           borderTopWidth: 0.5,
-          height: 85,
+          height: tabBarHeight,
           paddingTop: 8,
-          paddingBottom: 28,
+          paddingBottom: bottomPadding,
         },
         tabBarActiveTintColor: '#00D1A7',
         tabBarInactiveTintColor: '#6B7280',

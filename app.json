@@ -1,17 +1,34 @@
 {
   "expo": {
-    "name": "vibecode",
-    "slug": "vibecode",
-    "scheme": "vibecode",
+    "name": "Polar Fitness",
+    "slug": "polar-fitness",
+    "scheme": "polar-fitness",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon-1768254010.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.polarfitness.app"
     },
     "android": {
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.polarfitness.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon-1768254010.png",
+        "backgroundColor": "#0D0D0F"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/icon-1768254010.png",
+      "name": "Polar Fitness",
+      "shortName": "Polar Fit",
+      "description": "Track your recovery, strain, and sleep with Polar Flow integration",
+      "backgroundColor": "#0D0D0F",
+      "themeColor": "#00D1A7"
     },
     "plugins": ["expo-router"],
     "experiments": {

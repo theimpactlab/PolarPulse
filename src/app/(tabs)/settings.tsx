@@ -18,6 +18,7 @@ import {
   LogOut,
   LogIn,
   Heart,
+  Pencil,
 } from 'lucide-react-native';
 import { useAppStore, type UserSettings } from '@/lib/state/app-store';
 import { useAuthStore } from '@/lib/state/auth-store';
@@ -219,7 +220,10 @@ export default function SettingsScreen() {
             {isAuthenticated ? (
               <>
                 {/* Profile */}
-                <View className="p-4 border-b border-border">
+                <Pressable
+                  onPress={() => router.push('/edit-profile')}
+                  className="p-4 border-b border-border active:bg-surfaceLight"
+                >
                   <View className="flex-row items-center">
                     <View className="w-12 h-12 rounded-full bg-primary/20 items-center justify-center">
                       <User size={24} color="#00D1A7" />
@@ -230,8 +234,9 @@ export default function SettingsScreen() {
                       </Text>
                       <Text className="text-textMuted text-sm">{profile?.email}</Text>
                     </View>
+                    <Pencil size={18} color="#6B7280" />
                   </View>
-                </View>
+                </Pressable>
 
                 {/* Sign Out */}
                 <Pressable
@@ -267,67 +272,73 @@ export default function SettingsScreen() {
           <Text className="text-textMuted text-xs font-semibold mb-3 ml-1">DATA SOURCES</Text>
           <View className="bg-surface rounded-2xl overflow-hidden">
 
-            {/* Apple Health (iOS only) */}
-            {(Platform.OS === 'ios' || isAppleHealthAvailable) && (
-              <>
-                <View className="p-4 border-b border-border">
-                  <View className="flex-row items-center justify-between">
-                    <View className="flex-row items-center">
-                      <View className={`w-10 h-10 rounded-full items-center justify-center ${isAppleHealthConnected ? 'bg-red-500/20' : 'bg-surfaceLight'}`}>
-                        <Heart size={20} color={isAppleHealthConnected ? '#FF3B30' : '#6B7280'} />
-                      </View>
-                      <View className="ml-3">
-                        <Text className="text-textPrimary font-semibold">Apple Health</Text>
-                        <Text className={`text-sm ${isAppleHealthConnected ? 'text-red-400' : 'text-textMuted'}`}>
-                          {isAppleHealthConnected ? 'Connected' : 'Not connected'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {isAppleHealthConnected ? (
-                      <Pressable
-                        onPress={handleDisconnectAppleHealth}
-                        className="px-4 py-2 bg-surfaceLight rounded-lg active:opacity-70"
-                      >
-                        <Text className="text-recovery-low text-sm font-medium">Disconnect</Text>
-                      </Pressable>
-                    ) : (
-                      <Pressable
-                        onPress={handleConnectAppleHealth}
-                        className="px-4 py-2 bg-red-500 rounded-lg active:opacity-70"
-                      >
-                        <Text className="text-white text-sm font-semibold">Connect</Text>
-                      </Pressable>
-                    )}
+            {/* Apple Health */}
+            <View className="p-4 border-b border-border">
+              <View className="flex-row items-center justify-between">
+                <View className="flex-row items-center">
+                  <View className={`w-10 h-10 rounded-full items-center justify-center ${isAppleHealthConnected ? 'bg-red-500/20' : 'bg-surfaceLight'}`}>
+                    <Heart size={20} color={isAppleHealthConnected ? '#FF3B30' : '#6B7280'} />
+                  </View>
+                  <View className="ml-3">
+                    <Text className="text-textPrimary font-semibold">Apple Health</Text>
+                    <Text className={`text-sm ${isAppleHealthConnected ? 'text-red-400' : 'text-textMuted'}`}>
+                      {Platform.OS !== 'ios'
+                        ? 'iOS only'
+                        : isAppleHealthConnected
+                          ? 'Connected'
+                          : 'Not connected'}
+                    </Text>
                   </View>
                 </View>
 
-                {/* Apple Health Sync */}
-                {isAppleHealthConnected && (
-                  <Pressable
-                    onPress={handleSyncAppleHealth}
-                    disabled={isSyncingHealth}
-                    className="p-4 flex-row items-center justify-between border-b border-border active:bg-surfaceLight"
-                  >
-                    <View className="flex-row items-center">
-                      <Animated.View style={healthSpinStyle}>
-                        <RefreshCw size={20} color="#9CA3AF" />
-                      </Animated.View>
-                      <View className="ml-3">
-                        <Text className="text-textPrimary font-medium">Sync Apple Health</Text>
-                        {lastAppleHealthSyncDate && (
-                          <Text className="text-textMuted text-sm">
-                            Last synced: {new Date(lastAppleHealthSyncDate).toLocaleDateString()}
-                          </Text>
-                        )}
-                      </View>
-                    </View>
-                    <Text className="text-red-400 text-sm font-medium">
-                      {isSyncingHealth ? 'Syncing...' : 'Sync Now'}
-                    </Text>
-                  </Pressable>
+                {Platform.OS === 'ios' ? (
+                  isAppleHealthConnected ? (
+                    <Pressable
+                      onPress={handleDisconnectAppleHealth}
+                      className="px-4 py-2 bg-surfaceLight rounded-lg active:opacity-70"
+                    >
+                      <Text className="text-recovery-low text-sm font-medium">Disconnect</Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      onPress={handleConnectAppleHealth}
+                      className="px-4 py-2 bg-red-500 rounded-lg active:opacity-70"
+                    >
+                      <Text className="text-white text-sm font-semibold">Connect</Text>
+                    </Pressable>
+                  )
+                ) : (
+                  <View className="px-4 py-2 bg-surfaceLight rounded-lg opacity-50">
+                    <Text className="text-textMuted text-sm font-medium">iOS Only</Text>
+                  </View>
                 )}
-              </>
+              </View>
+            </View>
+
+            {/* Apple Health Sync */}
+            {isAppleHealthConnected && (
+              <Pressable
+                onPress={handleSyncAppleHealth}
+                disabled={isSyncingHealth}
+                className="p-4 flex-row items-center justify-between border-b border-border active:bg-surfaceLight"
+              >
+                <View className="flex-row items-center">
+                  <Animated.View style={healthSpinStyle}>
+                    <RefreshCw size={20} color="#9CA3AF" />
+                  </Animated.View>
+                  <View className="ml-3">
+                    <Text className="text-textPrimary font-medium">Sync Apple Health</Text>
+                    {lastAppleHealthSyncDate && (
+                      <Text className="text-textMuted text-sm">
+                        Last synced: {new Date(lastAppleHealthSyncDate).toLocaleDateString()}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+                <Text className="text-red-400 text-sm font-medium">
+                  {isSyncingHealth ? 'Syncing...' : 'Sync Now'}
+                </Text>
+              </Pressable>
             )}
 
             {/* Polar Flow */}
