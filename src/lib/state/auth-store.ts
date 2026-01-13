@@ -73,24 +73,10 @@ export const useAuthStore = create<AuthState>()(
       isLoading: false,
       isInitialized: false,
 
-      // Computed getters
-      get isAuthenticated() {
-        return get().user !== null;
-      },
-
-      get isPremium() {
-        const profile = get().profile;
-        if (!profile) return false;
-        if (profile.subscription_tier !== "premium") return false;
-        if (profile.subscription_expires_at) {
-          return new Date(profile.subscription_expires_at) > new Date();
-        }
-        return true;
-      },
-
-      get tierLimits() {
-        return get().isPremium ? TIER_LIMITS.premium : TIER_LIMITS.free;
-      },
+      // Computed - these need to be regular properties updated by set()
+      isAuthenticated: false,
+      isPremium: false,
+      tierLimits: TIER_LIMITS.free,
 
       // Initialize auth on app start
       initialize: async () => {
@@ -98,7 +84,11 @@ export const useAuthStore = create<AuthState>()(
         try {
           const session = await supabase.auth.initialize();
           if (session) {
-            set({ user: session.user, session });
+            set({
+              user: session.user,
+              session,
+              isAuthenticated: true,
+            });
             await get().fetchProfile();
           }
         } catch (error) {
@@ -109,14 +99,16 @@ export const useAuthStore = create<AuthState>()(
 
         // Listen for auth changes
         supabase.auth.onAuthStateChange((newSession) => {
+          const hasUser = newSession?.user != null;
           set({
             session: newSession,
             user: newSession?.user ?? null,
+            isAuthenticated: hasUser,
           });
           if (newSession) {
             get().fetchProfile();
           } else {
-            set({ profile: null });
+            set({ profile: null, isPremium: false, tierLimits: TIER_LIMITS.free });
           }
         });
       },
@@ -129,7 +121,7 @@ export const useAuthStore = create<AuthState>()(
             return { error: error.message };
           }
           if (session && user) {
-            set({ session, user });
+            set({ session, user, isAuthenticated: true });
             await get().fetchProfile();
           }
           return {};
@@ -149,7 +141,7 @@ export const useAuthStore = create<AuthState>()(
             return { error: error.message };
           }
           if (session && user) {
-            set({ session, user });
+            set({ session, user, isAuthenticated: true });
             await get().fetchProfile();
           }
           return {};
@@ -162,7 +154,14 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true });
         try {
           await supabase.auth.signOut();
-          set({ user: null, session: null, profile: null });
+          set({
+            user: null,
+            session: null,
+            profile: null,
+            isAuthenticated: false,
+            isPremium: false,
+            tierLimits: TIER_LIMITS.free,
+          });
         } finally {
           set({ isLoading: false });
         }
@@ -193,7 +192,21 @@ export const useAuthStore = create<AuthState>()(
         }
 
         if (data) {
-          set({ profile: data });
+          // Calculate premium status
+          let isPremium = false;
+          if (data.subscription_tier === "premium") {
+            if (data.subscription_expires_at) {
+              isPremium = new Date(data.subscription_expires_at) > new Date();
+            } else {
+              isPremium = true;
+            }
+          }
+
+          set({
+            profile: data,
+            isPremium,
+            tierLimits: isPremium ? TIER_LIMITS.premium : TIER_LIMITS.free,
+          });
         }
       },
 
@@ -263,6 +276,8 @@ export const useAuthStore = create<AuthState>()(
         user: state.user,
         session: state.session,
         profile: state.profile,
+        isAuthenticated: state.isAuthenticated,
+        isPremium: state.isPremium,
       }),
     }
   )
