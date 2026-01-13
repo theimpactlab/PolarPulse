@@ -73,6 +73,8 @@ A Whoop-style fitness tracking app that connects to Polar AccessLink and Apple H
 4. Deploy - Vercel will auto-detect Expo and build the web version
 5. Note your Vercel URL (e.g., `https://your-app.vercel.app`)
 
+**Important:** The `vercel.json` file configures client-side routing. All routes (like `/polar-callback`) are handled by the React app, not as separate pages.
+
 ### Step 2: Set Up Supabase
 
 1. Create a project at [supabase.com](https://supabase.com)

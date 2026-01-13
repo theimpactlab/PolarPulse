@@ -218,9 +218,23 @@ class PolarOAuthService {
         };
       }
 
+      // Get the user ID - either from Supabase auth or local storage
+      const user = supabase.auth.getUser();
+      const userId = user?.id || await this.getLocalUserId();
+
+      if (!userId) {
+        return {
+          success: false,
+          error: 'No user ID found. Please reconnect Polar.',
+        };
+      }
+
+      // Call sync with user_id in body for local users
       const { data, error } = await supabase.functions.invoke<{
         results: Array<{ success: boolean; synced?: number; error?: string }>;
-      }>('sync-polar');
+      }>('sync-polar', {
+        body: { user_id: userId },
+      });
 
       if (error) {
         return {
@@ -291,25 +305,31 @@ class PolarOAuthService {
   }
 
   /**
-   * Checks if the user has Polar connected
+   * Checks if the user has Polar connected by querying the backend
    */
   async checkPolarConnection(): Promise<boolean> {
     try {
-      const user = supabase.auth.getUser();
-      const userId = user?.id || await this.getLocalUserId();
+      if (!SUPABASE_URL) return false;
 
+      const userId = await this.getLocalUserId();
       if (!userId) return false;
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('oauth_tokens')
         .select('id')
         .eq('user_id', userId)
         .eq('provider', 'polar')
-        .single()
-        .execute<{ id: string }>();
+        .limit(1)
+        .execute<Array<{ id: string }>>();
 
-      return !!data;
-    } catch {
+      if (error) {
+        console.log('Polar connection check error:', error.message);
+        return false;
+      }
+
+      return Array.isArray(data) && data.length > 0;
+    } catch (err) {
+      console.log('Polar connection check failed:', err);
       return false;
     }
   }

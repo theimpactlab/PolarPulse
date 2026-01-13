@@ -1,11 +1,11 @@
 {
   "expo": {
     "name": "PolarPulse",
-    "slug": "polar-fitness",
+    "slug": "PolarPulse",
     "scheme": "polar-fitness",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/PolarPulseLogo.png",
+    "icon": "./assets/PolarPulse.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -16,16 +16,16 @@
       "edgeToEdgeEnabled": true,
       "package": "com.polarfitness.app",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/PolarPulseLogo.png",
+        "foregroundImage": "./assets/PolarPulse.png",
         "backgroundColor": "#0D0D0F"
       }
     },
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/PolarPulseLogo.png",
+      "favicon": "./assets/PolarPulse.png",
       "name": "PolarPulse",
-      "shortName": "PolarPulse",
+      "shortName": "Polar Fit",
       "description": "Track your recovery, strain, and sleep with Polar Flow integration",
       "backgroundColor": "#0D0D0F",
       "themeColor": "#00D1A7"

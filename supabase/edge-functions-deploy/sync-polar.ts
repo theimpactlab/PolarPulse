@@ -194,22 +194,49 @@ Deno.serve(async (req) => {
   );
 
   try {
-    // Get user from auth header or sync all users (for cron)
-    const authHeader = req.headers.get("Authorization");
     let users: any[] = [];
 
-    if (authHeader) {
-      const { data: { user } } = await supabase.auth.getUser(
-        authHeader.replace("Bearer ", "")
-      );
-      if (user) users = [{ id: user.id }];
+    // Check for user_id in request body first (for local/anonymous users)
+    let bodyUserId: string | null = null;
+    try {
+      const body = await req.json();
+      bodyUserId = body?.user_id;
+    } catch {
+      // No body or invalid JSON, that's ok
+    }
+
+    if (bodyUserId) {
+      // User ID provided in body - use it directly
+      users = [{ id: bodyUserId }];
     } else {
-      // Cron job - sync all connected users
-      const { data } = await supabase
-        .from("profiles")
-        .select("id")
-        .not("polar_user_id", "is", null);
-      users = data || [];
+      // Try to get user from auth header
+      const authHeader = req.headers.get("Authorization");
+      if (authHeader && !authHeader.includes("anon")) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser(
+            authHeader.replace("Bearer ", "")
+          );
+          if (user) users = [{ id: user.id }];
+        } catch {
+          // Invalid JWT, continue to check for other options
+        }
+      }
+
+      if (users.length === 0) {
+        // Cron job - sync all connected users
+        const { data } = await supabase
+          .from("oauth_tokens")
+          .select("user_id")
+          .eq("provider", "polar");
+        users = (data || []).map(t => ({ id: t.user_id }));
+      }
+    }
+
+    if (users.length === 0) {
+      return new Response(JSON.stringify({ error: "No user found to sync" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const results = [];
@@ -222,7 +249,10 @@ Deno.serve(async (req) => {
         .eq("provider", "polar")
         .single();
 
-      if (!token) continue;
+      if (!token) {
+        results.push({ user_id: user.id, success: false, error: "No Polar token found" });
+        continue;
+      }
 
       try {
         const accessToken = await refreshTokenIfNeeded(supabase, user.id, token);

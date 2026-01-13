@@ -7,6 +7,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useEffect } from 'react';
 import { useAuthStore } from '@/lib/state/auth-store';
+import { useAppStore } from '@/lib/state/app-store';
+import { polarOAuthService } from '@/lib/services/polar-oauth';
 import { Platform } from 'react-native';
 
 // Only import KeyboardProvider on native platforms
@@ -42,9 +44,29 @@ function RootLayoutNav({ colorScheme }: { colorScheme: 'light' | 'dark' | null |
   const initialize = useAuthStore((s) => s.initialize);
 
   useEffect(() => {
-    initialize().then(() => {
+    const initApp = async () => {
+      // Initialize auth
+      await initialize();
+
+      // Check Polar connection status from backend
+      // This syncs local state with backend in case OAuth completed on another device/browser
+      try {
+        const isConnected = await polarOAuthService.checkPolarConnection();
+        const currentlyConnected = useAppStore.getState().isPolarConnected;
+
+        if (isConnected && !currentlyConnected) {
+          // Backend shows connected but local state doesn't - update local state
+          useAppStore.setState({ isPolarConnected: true, isDemoMode: false });
+          console.log('Polar connection status synced from backend');
+        }
+      } catch (err) {
+        console.log('Failed to check Polar connection:', err);
+      }
+
       SplashScreen.hideAsync();
-    });
+    };
+
+    initApp();
   }, [initialize]);
 
   return (
