@@ -39,9 +39,11 @@ class PolarOAuthService {
         };
       }
 
-      // Get the current user if signed in, or use a device-local ID
-      const user = supabase.auth.getUser();
-      const userId = user?.id || await this.getOrCreateLocalUserId();
+      // Get the current user - prioritize Supabase authenticated user
+      const supabaseUser = supabase.auth.getUser();
+      const userId = supabaseUser?.id || await this.getOrCreateLocalUserId();
+
+      console.log('Polar OAuth starting with user ID:', userId);
 
       // Build the OAuth URL with platform-specific redirect
       const appUrl = getAppUrl();
@@ -218,18 +220,20 @@ class PolarOAuthService {
         };
       }
 
-      // Get the user ID - either from Supabase auth or local storage
-      const user = supabase.auth.getUser();
-      const userId = user?.id || await this.getLocalUserId();
+      // Get the user ID - prioritize Supabase authenticated user
+      const supabaseUser = supabase.auth.getUser();
+      const userId = supabaseUser?.id || await this.getLocalUserId();
+
+      console.log('Polar sync with user ID:', userId);
 
       if (!userId) {
         return {
           success: false,
-          error: 'No user ID found. Please reconnect Polar.',
+          error: 'No user ID found. Please sign in or reconnect Polar.',
         };
       }
 
-      // Call sync with user_id in body for local users
+      // Call sync with user_id in body
       const { data, error } = await supabase.functions.invoke<{
         results: Array<{ success: boolean; synced?: number; error?: string }>;
       }>('sync-polar', {
@@ -311,7 +315,10 @@ class PolarOAuthService {
     try {
       if (!SUPABASE_URL) return false;
 
-      const userId = await this.getLocalUserId();
+      // Prioritize Supabase authenticated user
+      const supabaseUser = supabase.auth.getUser();
+      const userId = supabaseUser?.id || await this.getLocalUserId();
+
       if (!userId) return false;
 
       const { data, error } = await supabase
