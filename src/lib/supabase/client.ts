@@ -554,33 +554,6 @@ class SupabaseFunctions {
     this.auth = auth;
   }
 
-  // Use XMLHttpRequest to bypass any fetch proxies
-  private async directFetch(
-    url: string,
-    options: { method: string; headers: Record<string, string>; body?: string }
-  ): Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown> }> {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open(options.method, url, true);
-
-      Object.entries(options.headers).forEach(([key, value]) => {
-        xhr.setRequestHeader(key, value);
-      });
-
-      xhr.onload = () => {
-        resolve({
-          ok: xhr.status >= 200 && xhr.status < 300,
-          status: xhr.status,
-          text: async () => xhr.responseText,
-          json: async () => JSON.parse(xhr.responseText),
-        });
-      };
-
-      xhr.onerror = () => reject(new Error('Network error'));
-      xhr.send(options.body);
-    });
-  }
-
   async invoke<T>(
     functionName: string,
     options?: { body?: Record<string, unknown> }
@@ -597,13 +570,11 @@ class SupabaseFunctions {
       }
 
       const url = `${SUPABASE_URL}/functions/v1/${functionName}`;
-      const body = options?.body ? JSON.stringify(options.body) : undefined;
 
-      // Use direct XMLHttpRequest to bypass Vibecode proxy on web
-      const response = await this.directFetch(url, {
+      const response = await fetch(url, {
         method: "POST",
         headers,
-        body,
+        body: options?.body ? JSON.stringify(options.body) : undefined,
       });
 
       if (!response.ok) {

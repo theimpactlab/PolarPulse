@@ -4,7 +4,7 @@
 // This file is for reference - deploy to Supabase Edge Functions
 // It uses Deno runtime which is not compatible with local TS checks
 
-
+/*
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -144,6 +144,6 @@ Deno.serve(async (req) => {
     });
   }
 });
-
+*/
 
 export {};

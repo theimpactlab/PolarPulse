@@ -213,7 +213,7 @@ For detailed backend setup instructions, see **[docs/SUPABASE_SETUP.md](docs/SUP
 
 ### Environment Variables
 
-Add these to your `.env` file or the Vibecode ENV tab:
+Add these to your `.env` file or Vercel environment variables:
 
 ```
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
