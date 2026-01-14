@@ -22,6 +22,7 @@ import {
 } from 'lucide-react-native';
 import { useAppStore, type UserSettings } from '@/lib/state/app-store';
 import { useAuthStore } from '@/lib/state/auth-store';
+import { supabase } from '@/lib/supabase/client';
 import Animated, { useAnimatedStyle, withRepeat, withTiming, Easing } from 'react-native-reanimated';
 import { X, Check } from 'lucide-react-native';
 
@@ -32,6 +33,7 @@ export default function SettingsScreen() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSyncingHealth, setIsSyncingHealth] = useState(false);
   const [showSleepGoalPicker, setShowSleepGoalPicker] = useState(false);
+  const [isDisconnectingPolar, setIsDisconnectingPolar] = useState(false);
 
   // App store - Polar
   const isPolarConnected = useAppStore((s): boolean => s.isPolarConnected);
@@ -46,7 +48,6 @@ export default function SettingsScreen() {
 
   // App store - Apple Health
   const isAppleHealthConnected = useAppStore((s): boolean => s.isAppleHealthConnected);
-  const isAppleHealthAvailable = useAppStore((s): boolean => s.isAppleHealthAvailable);
   const lastAppleHealthSyncDate = useAppStore((s): string | undefined => s.lastAppleHealthSyncDate);
   const connectAppleHealth = useAppStore((s) => s.connectAppleHealth);
   const disconnectAppleHealth = useAppStore((s) => s.disconnectAppleHealth);
@@ -64,13 +65,55 @@ export default function SettingsScreen() {
     }
   };
 
+  const performDisconnectPolar = async () => {
+    const userId = profile?.id;
+
+    if (!isAuthenticated || !userId) {
+      Alert.alert('Sign in required', 'Please sign in before disconnecting Polar.');
+      return;
+    }
+
+    setIsDisconnectingPolar(true);
+    try {
+      const { data, error } = await supabase.functions.invoke<{ success: boolean }>(
+        'disconnect-polar',
+        { body: { user_id: userId } }
+      );
+
+      if (error) {
+        Alert.alert('Disconnect Failed', error.message || 'Unable to disconnect Polar.');
+        return;
+      }
+
+      if (!data?.success) {
+        Alert.alert('Disconnect Failed', 'Disconnect did not complete. Please try again.');
+        return;
+      }
+
+      // Update local app state
+      await disconnectPolar();
+
+      Alert.alert('Disconnected', 'Your Polar account has been disconnected.');
+    } catch (e) {
+      Alert.alert('Disconnect Failed', e instanceof Error ? e.message : 'Unable to disconnect Polar.');
+    } finally {
+      setIsDisconnectingPolar(false);
+    }
+  };
+
   const handleDisconnectPolar = () => {
     Alert.alert(
       'Disconnect Polar',
       'This will disconnect your Polar account. Your historical data will be preserved.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Disconnect', style: 'destructive', onPress: () => disconnectPolar() },
+        {
+          text: isDisconnectingPolar ? 'Disconnecting...' : 'Disconnect',
+          style: 'destructive',
+          onPress: () => {
+            void performDisconnectPolar();
+          },
+        },
       ]
     );
   };
@@ -94,8 +137,7 @@ export default function SettingsScreen() {
     if (!result.success) {
       Alert.alert('Connection Failed', result.error || 'Unable to connect to Apple Health');
     } else {
-      // Auto-sync after connecting
-      handleSyncAppleHealth();
+      void handleSyncAppleHealth();
     }
   };
 
@@ -145,27 +187,23 @@ export default function SettingsScreen() {
           onPress: () => {
             clearAllData();
             Alert.alert('Data Deleted', 'All your data has been removed.');
-          }
+          },
         },
       ]
     );
   };
 
   const handleSignOut = () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            await signOut();
-          }
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          await signOut();
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const handleSleepGoalChange = (hours: number) => {
@@ -256,9 +294,7 @@ export default function SettingsScreen() {
                   <LogIn size={20} color="#00D1A7" />
                   <View className="ml-3">
                     <Text className="text-textPrimary font-medium">Sign In</Text>
-                    <Text className="text-textMuted text-sm">
-                      Sync data across devices
-                    </Text>
+                    <Text className="text-textMuted text-sm">Sync data across devices</Text>
                   </View>
                 </View>
                 <ChevronRight size={18} color="#6B7280" />
@@ -271,17 +307,24 @@ export default function SettingsScreen() {
         <View className="mx-5 mt-6">
           <Text className="text-textMuted text-xs font-semibold mb-3 ml-1">DATA SOURCES</Text>
           <View className="bg-surface rounded-2xl overflow-hidden">
-
             {/* Apple Health */}
             <View className="p-4 border-b border-border">
               <View className="flex-row items-center justify-between">
                 <View className="flex-row items-center">
-                  <View className={`w-10 h-10 rounded-full items-center justify-center ${isAppleHealthConnected ? 'bg-red-500/20' : 'bg-surfaceLight'}`}>
+                  <View
+                    className={`w-10 h-10 rounded-full items-center justify-center ${
+                      isAppleHealthConnected ? 'bg-red-500/20' : 'bg-surfaceLight'
+                    }`}
+                  >
                     <Heart size={20} color={isAppleHealthConnected ? '#FF3B30' : '#6B7280'} />
                   </View>
                   <View className="ml-3">
                     <Text className="text-textPrimary font-semibold">Apple Health</Text>
-                    <Text className={`text-sm ${isAppleHealthConnected ? 'text-red-400' : 'text-textMuted'}`}>
+                    <Text
+                      className={`text-sm ${
+                        isAppleHealthConnected ? 'text-red-400' : 'text-textMuted'
+                      }`}
+                    >
                       {Platform.OS !== 'ios'
                         ? 'iOS only'
                         : isAppleHealthConnected
@@ -345,7 +388,11 @@ export default function SettingsScreen() {
             <View className="p-4 border-b border-border">
               <View className="flex-row items-center justify-between">
                 <View className="flex-row items-center">
-                  <View className={`w-10 h-10 rounded-full items-center justify-center ${isPolarConnected ? 'bg-primary/20' : 'bg-surfaceLight'}`}>
+                  <View
+                    className={`w-10 h-10 rounded-full items-center justify-center ${
+                      isPolarConnected ? 'bg-primary/20' : 'bg-surfaceLight'
+                    }`}
+                  >
                     {isPolarConnected ? (
                       <Link2 size={20} color="#00D1A7" />
                     ) : (
@@ -363,9 +410,14 @@ export default function SettingsScreen() {
                 {isPolarConnected ? (
                   <Pressable
                     onPress={handleDisconnectPolar}
-                    className="px-4 py-2 bg-surfaceLight rounded-lg active:opacity-70"
+                    disabled={isDisconnectingPolar}
+                    className={`px-4 py-2 rounded-lg active:opacity-70 ${
+                      isDisconnectingPolar ? 'bg-surfaceLight opacity-60' : 'bg-surfaceLight'
+                    }`}
                   >
-                    <Text className="text-recovery-low text-sm font-medium">Disconnect</Text>
+                    <Text className="text-recovery-low text-sm font-medium">
+                      {isDisconnectingPolar ? 'Disconnecting...' : 'Disconnect'}
+                    </Text>
                   </Pressable>
                 ) : (
                   <Pressable
@@ -511,10 +563,7 @@ export default function SettingsScreen() {
           className="flex-1 bg-black/60 justify-end"
           onPress={() => setShowSleepGoalPicker(false)}
         >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            className="bg-surface rounded-t-3xl"
-          >
+          <Pressable onPress={(e) => e.stopPropagation()} className="bg-surface rounded-t-3xl">
             {/* Header */}
             <View className="flex-row items-center justify-between p-4 border-b border-border">
               <Pressable
@@ -535,9 +584,15 @@ export default function SettingsScreen() {
                   <Pressable
                     key={hours}
                     onPress={() => handleSleepGoalChange(hours)}
-                    className={`p-4 flex-row items-center justify-between border-b border-border active:bg-surfaceLight ${isSelected ? 'bg-primary/10' : ''}`}
+                    className={`p-4 flex-row items-center justify-between border-b border-border active:bg-surfaceLight ${
+                      isSelected ? 'bg-primary/10' : ''
+                    }`}
                   >
-                    <Text className={`text-base ${isSelected ? 'text-primary font-semibold' : 'text-textPrimary'}`}>
+                    <Text
+                      className={`text-base ${
+                        isSelected ? 'text-primary font-semibold' : 'text-textPrimary'
+                      }`}
+                    >
                       {hours} hours
                     </Text>
                     {isSelected && <Check size={20} color="#00D1A7" />}
