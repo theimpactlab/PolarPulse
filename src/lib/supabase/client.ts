@@ -8,6 +8,13 @@ const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
 
 const AUTH_STORAGE_KEY = "supabase_auth_session";
 
+if (!SUPABASE_URL) {
+  throw new Error("Missing EXPO_PUBLIC_SUPABASE_URL");
+}
+if (!SUPABASE_ANON_KEY) {
+  throw new Error("Missing EXPO_PUBLIC_SUPABASE_ANON_KEY");
+}
+
 export interface User {
   id: string;
   email?: string;
