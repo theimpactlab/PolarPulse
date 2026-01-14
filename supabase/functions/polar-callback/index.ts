@@ -8,28 +8,24 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
 };
 
 interface PolarTokens {
   access_token: string;
   refresh_token?: string;
   expires_in: number;
-  x_user_id: string;
+  x_user_id?: string; // Polar Remote user id (not the AccessLink numeric id)
 }
 
-// Parse the state parameter to extract userId and optional redirectUrl
 function parseState(state: string): { userId: string; redirectUrl?: string } {
   if (state.includes("|")) {
     const [userId, encodedRedirectUrl] = state.split("|");
-    return {
-      userId,
-      redirectUrl: decodeURIComponent(encodedRedirectUrl),
-    };
+    return { userId, redirectUrl: decodeURIComponent(encodedRedirectUrl) };
   }
   return { userId: state };
 }
 
-// Get the appropriate redirect URL based on state
 function getRedirectUrl(
   stateData: { userId: string; redirectUrl?: string },
   success: boolean,
@@ -37,11 +33,8 @@ function getRedirectUrl(
 ): string {
   if (stateData.redirectUrl) {
     const url = new URL(stateData.redirectUrl);
-    if (success) {
-      url.searchParams.set("polar", "connected");
-    } else if (error) {
-      url.searchParams.set("error", error);
-    }
+    if (success) url.searchParams.set("polar", "connected");
+    else if (error) url.searchParams.set("error", error);
     return url.toString();
   }
 
@@ -58,10 +51,20 @@ async function readTextSafe(res: Response): Promise<string> {
   }
 }
 
+function isJsonResponse(res: Response): boolean {
+  const ct = res.headers.get("content-type") ?? "";
+  return ct.toLowerCase().includes("application/json");
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
     const url = new URL(req.url);
@@ -71,16 +74,8 @@ Deno.serve(async (req) => {
 
     const stateData = state ? parseState(state) : { userId: "" };
 
-    if (error) {
-      return Response.redirect(getRedirectUrl(stateData, false, "oauth_denied"));
-    }
-
-    if (!code || !state) {
-      return new Response(JSON.stringify({ error: "Missing code or state" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (error) return Response.redirect(getRedirectUrl(stateData, false, "oauth_denied"));
+    if (!code || !state) return jsonResponse({ error: "Missing code or state" }, 400);
 
     const userId = stateData.userId;
 
@@ -89,21 +84,10 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-    if (!clientId || !clientSecret) {
-      return new Response(JSON.stringify({ error: "Polar not configured" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!clientId || !clientSecret) return jsonResponse({ error: "Polar not configured" }, 500);
+    if (!supabaseUrl || !serviceRoleKey) return jsonResponse({ error: "Supabase not configured" }, 500);
 
-    if (!supabaseUrl || !serviceRoleKey) {
-      return new Response(JSON.stringify({ error: "Supabase not configured" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Exchange code for tokens
+    // 1) Exchange code for tokens
     const tokenResponse = await fetch("https://polarremote.com/v2/oauth2/token", {
       method: "POST",
       headers: {
@@ -124,29 +108,71 @@ Deno.serve(async (req) => {
 
     const tokens: PolarTokens = await tokenResponse.json();
 
-    // Register user with Polar AccessLink (IMPORTANT: check HTTP status)
-    try {
-      const regRes = await fetch("https://www.polaraccesslink.com/v3/users", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${tokens.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ "member-id": userId }),
-      });
-
-      // Polar often returns "already exists" style responses depending on state.
-      // Accept common non-fatal statuses (409 conflict is typical for already-registered).
-      if (!regRes.ok && regRes.status !== 409) {
-        const regBody = await readTextSafe(regRes);
-        console.error("Polar registration failed:", regRes.status, regBody);
-        // We still continue so the user can retry sync, but we record the problem.
-      }
-    } catch (e) {
-      console.error("Polar registration network error:", e);
+    if (!tokens.access_token || !tokens.expires_in) {
+      console.error("Token exchange returned incomplete token set");
+      return Response.redirect(getRedirectUrl(stateData, false, "token_exchange"));
     }
 
-    // Save to Supabase
+    // 2) Register user with Polar AccessLink to get numeric AccessLink user-id
+    // Store accesslinkUserId in oauth_tokens.polar_user_id
+    let accesslinkUserId: number | null = null;
+
+    const regRes = await fetch("https://www.polaraccesslink.com/v3/users", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokens.access_token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ "member-id": userId }),
+    });
+
+    const regBodyText = await readTextSafe(regRes);
+
+    if (regRes.ok) {
+      // Most common case: user successfully registered and response contains user-id
+      if (regBodyText && isJsonResponse(regRes)) {
+        try {
+          const regJson = JSON.parse(regBodyText);
+          const direct = regJson?.["user-id"];
+          if (typeof direct === "number") {
+            accesslinkUserId = direct;
+          } else {
+            const uri = regJson?.["resource-uri"];
+            const match = typeof uri === "string" ? uri.match(/\/v3\/users\/(\d+)/) : null;
+            if (match) accesslinkUserId = Number(match[1]);
+          }
+        } catch {
+          // ignore parse fail
+        }
+      }
+    } else if (regRes.status === 409) {
+      // Already registered. This is common.
+      // Unfortunately Polar may not return user-id here. We store tokens anyway, but
+      // we can’t sync until we know the numeric AccessLink user id.
+      console.warn("AccessLink registration returned 409 (already registered). Body:", regBodyText);
+
+      // Best-effort attempt: sometimes 409 still returns JSON with resource-uri.
+      if (regBodyText) {
+        try {
+          const maybeJson = JSON.parse(regBodyText);
+          const direct = maybeJson?.["user-id"];
+          if (typeof direct === "number") {
+            accesslinkUserId = direct;
+          } else {
+            const uri = maybeJson?.["resource-uri"];
+            const match = typeof uri === "string" ? uri.match(/\/v3\/users\/(\d+)/) : null;
+            if (match) accesslinkUserId = Number(match[1]);
+          }
+        } catch {
+          // no usable JSON
+        }
+      }
+    } else {
+      console.error("AccessLink registration failed:", regRes.status, regBodyText);
+    }
+
+    // 3) Save to Supabase
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     await supabase.from("oauth_tokens").upsert(
@@ -156,25 +182,31 @@ Deno.serve(async (req) => {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+        polar_user_id: accesslinkUserId,
+        updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id,provider" }
     );
 
+    // Optional: keep profile info too
     await supabase
       .from("profiles")
       .update({
-        polar_user_id: tokens.x_user_id,
         polar_connected_at: new Date().toISOString(),
+        polar_remote_user_id: tokens.x_user_id ?? null,
       })
       .eq("id", userId);
+
+    // If we failed to get AccessLink numeric id, syncing will fail.
+    // Return an explicit error so you see it immediately.
+    if (!accesslinkUserId) {
+      return Response.redirect(getRedirectUrl(stateData, false, "accesslink_userid_missing"));
+    }
 
     return Response.redirect(getRedirectUrl(stateData, true));
   } catch (err) {
     console.error("Callback error:", err);
-    return new Response(JSON.stringify({ error: "Internal server error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: "Internal server error" }, 500);
   }
 });
 
