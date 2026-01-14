@@ -616,3 +616,6 @@ export const supabase = {
 
 // Initialize auth on import
 auth.initialize();
+
+// TEMP debug
+console.log("[supabase.functions.invoke]", { functionName, url });
