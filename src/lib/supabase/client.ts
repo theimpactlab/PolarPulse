@@ -8,6 +8,7 @@ const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
 
 const AUTH_STORAGE_KEY = "supabase_auth_session";
 
+// Fail fast if env vars are missing (prevents accidental calls to the Vercel host)
 if (!SUPABASE_URL) {
   throw new Error("Missing EXPO_PUBLIC_SUPABASE_URL");
 }
@@ -68,9 +69,7 @@ class SupabaseAuth {
     this.listeners.forEach((listener) => listener(session));
   }
 
-  onAuthStateChange(
-    callback: (session: Session | null) => void
-  ): () => void {
+  onAuthStateChange(callback: (session: Session | null) => void): () => void {
     this.listeners.push(callback);
     return () => {
       this.listeners = this.listeners.filter((l) => l !== callback);
@@ -85,10 +84,7 @@ class SupabaseAuth {
     return this.session?.user ?? null;
   }
 
-  async signUp(
-    email: string,
-    password: string
-  ): Promise<AuthResponse> {
+  async signUp(email: string, password: string): Promise<AuthResponse> {
     try {
       const response = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
         method: "POST",
@@ -130,22 +126,16 @@ class SupabaseAuth {
     }
   }
 
-  async signInWithPassword(
-    email: string,
-    password: string
-  ): Promise<AuthResponse> {
+  async signInWithPassword(email: string, password: string): Promise<AuthResponse> {
     try {
-      const response = await fetch(
-        `${SUPABASE_URL}/auth/v1/token?grant_type=password`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ email, password }),
-        }
-      );
+      const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ email, password }),
+      });
 
       const data = await response.json();
 
@@ -178,7 +168,9 @@ class SupabaseAuth {
   async signInWithOAuth(provider: "apple" | "google"): Promise<string> {
     // Returns the URL to open in browser for OAuth
     const redirectUrl = `${SUPABASE_URL}/auth/v1/callback`;
-    return `${SUPABASE_URL}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(redirectUrl)}`;
+    return `${SUPABASE_URL}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(
+      redirectUrl
+    )}`;
   }
 
   async refreshSession(): Promise<AuthResponse> {
@@ -187,17 +179,14 @@ class SupabaseAuth {
     }
 
     try {
-      const response = await fetch(
-        `${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ refresh_token: this.session.refresh_token }),
-        }
-      );
+      const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ refresh_token: this.session.refresh_token }),
+      });
 
       const data = await response.json();
 
@@ -284,6 +273,7 @@ class SupabaseDB {
 
     const session = this.auth.getSession();
     if (session?.access_token) {
+      // @ts-expect-error HeadersInit can be a record
       headers.Authorization = `Bearer ${session.access_token}`;
     }
 
@@ -411,7 +401,7 @@ class SupabaseQueryBuilder {
 
       const data = await response.json();
       return {
-        data: this.isSingle ? data[0] ?? null : data,
+        data: this.isSingle ? (data[0] ?? null) : data,
         error: null,
       };
     } catch (error) {
@@ -578,17 +568,30 @@ class SupabaseFunctions {
 
       const url = `${SUPABASE_URL}/functions/v1/${functionName}`;
 
+      // TEMP debug: remove once confirmed
+      console.log("[supabase.functions.invoke]", { functionName, url });
+
       const response = await fetch(url, {
         method: "POST",
         headers,
         body: options?.body ? JSON.stringify(options.body) : undefined,
       });
 
+      const contentType = response.headers.get("content-type") ?? "";
+
       if (!response.ok) {
         const errorText = await response.text();
         return {
           data: null,
-          error: { message: errorText || "Function call failed" },
+          error: { message: errorText || `HTTP ${response.status}` },
+        };
+      }
+
+      if (!contentType.includes("application/json")) {
+        const text = await response.text();
+        return {
+          data: null,
+          error: { message: `Expected JSON, got ${contentType}. Body: ${text}` },
         };
       }
 
@@ -616,6 +619,3 @@ export const supabase = {
 
 // Initialize auth on import
 auth.initialize();
-
-// TEMP debug
-console.log("[supabase.functions.invoke]", { functionName, url });
