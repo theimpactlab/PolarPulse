@@ -1,6 +1,7 @@
+// metro.config.js
 const { getDefaultConfig } = require("expo/metro-config");
 const { withNativeWind } = require("nativewind/metro");
-const { withVibecodeMetro } = require("@vibecodeapp/sdk/metro");
+const { resolve } = require("metro-resolver");
 
 /** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname);
@@ -11,7 +12,7 @@ config.resolver.useWatchman = false;
 // Configure asset and source extensions.
 const { assetExts, sourceExts } = config.resolver;
 
-// SVG transformer is configured by withVibecodeMetro
+// Keep your transformer options.
 config.transformer = {
   ...config.transformer,
   getTransformOptions: async () => ({
@@ -22,14 +23,19 @@ config.transformer = {
   }),
 };
 
-// Configure resolver with SVG support and web platform mocking
+// If you import SVG files as React components (e.g. `import Logo from "./logo.svg"`),
+// keep this transformer. If you never import SVGs, you can remove this line.
+config.transformer.babelTransformerPath = require.resolve(
+  "react-native-svg-transformer"
+);
+
+// Keep SVG support + web module mocking (as you had it), with a safe default resolver fallback.
 config.resolver = {
   ...config.resolver,
   assetExts: assetExts.filter((ext) => ext !== "svg"),
   sourceExts: [...sourceExts, "svg"],
   useWatchman: false,
   resolveRequest: (context, moduleName, platform) => {
-    // Mock native-only modules on web
     if (platform === "web") {
       const nativeOnlyModules = [
         "react-native-pager-view",
@@ -38,16 +44,13 @@ config.resolver = {
       ];
 
       if (nativeOnlyModules.some((mod) => moduleName.includes(mod))) {
-        return {
-          type: "empty",
-        };
+        return { type: "empty" };
       }
     }
 
-    // Fallback to default resolution
-    return context.resolveRequest(context, moduleName, platform);
+    // Fall back to Metro's default resolver.
+    return resolve(context, moduleName, platform);
   },
 };
 
-// Integrate NativeWind with the Metro configuration.
-module.exports = withNativeWind(withVibecodeMetro(config), { input: "./global.css" });
+module.exports = withNativeWind(config, { input: "./global.css" });
