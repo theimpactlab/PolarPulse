@@ -187,10 +187,10 @@ export const useAppStore = create<AppState>()(
       },
 
       disconnectPolar: async () => {
-        const result = await polarOAuthService.disconnectPolar();
-
-        if (!result.success) {
-          return result;
+        try {
+          await polarOAuthService.disconnectPolar();
+        } catch {
+          // If server disconnect fails, still clear local state
         }
 
         set({
@@ -201,8 +201,6 @@ export const useAppStore = create<AppState>()(
           polarUserId: undefined,
           lastSyncDate: undefined,
         });
-
-        return { success: true };
       },
 
       syncData: async () => {
