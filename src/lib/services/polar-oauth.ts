@@ -3,7 +3,12 @@ import { supabase } from "@/lib/supabase/client";
 
 type Result = { success: boolean; error?: string };
 type SyncResult = { success: boolean; synced?: number; error?: string };
-type CheckResult = { success: boolean; connected: boolean; polarUserId?: string; error?: string };
+type PullResult = {
+  success: boolean;
+  workouts?: any[];
+  sleeps?: any[];
+  error?: string;
+};
 
 const APP_WEB_URL = process.env.EXPO_PUBLIC_APP_URL || "";
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
@@ -25,7 +30,6 @@ export const polarOAuthService = {
 
       const redirectUrl = getCallbackUrl();
 
-      // Uses your existing edge function: polar-auth
       const authorizeUrl =
         `${SUPABASE_URL}/functions/v1/polar-auth` +
         `?user_id=${encodeURIComponent(userId)}` +
@@ -54,39 +58,6 @@ export const polarOAuthService = {
     // no-op
   },
 
-  /**
-   * Checks connection by reading profiles.polar_user_id for the current user.
-   * Returns connected=true if polar_user_id is present.
-   */
-  async checkPolarConnection(): Promise<CheckResult> {
-    try {
-      const session = supabase.auth.getSession?.() ?? null;
-      const userId = session?.user?.id ?? supabase.auth.getUser?.()?.id ?? null;
-
-      if (!userId) return { success: true, connected: false };
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("polar_user_id, polar_connected_at")
-        .eq("id", userId)
-        .single()
-        .execute<{ polar_user_id: string | null; polar_connected_at: string | null }>();
-
-      if (error) {
-        return { success: false, connected: false, error: error.message };
-      }
-
-      const polarUserId = data?.polar_user_id ?? null;
-      return { success: true, connected: !!polarUserId, polarUserId: polarUserId ?? undefined };
-    } catch (e) {
-      return {
-        success: false,
-        connected: false,
-        error: e instanceof Error ? e.message : "Failed to check Polar connection.",
-      };
-    }
-  },
-
   async syncPolarData(): Promise<SyncResult> {
     try {
       const session = supabase.auth.getSession?.() ?? null;
@@ -107,6 +78,43 @@ export const polarOAuthService = {
       return { success: true, synced: first.synced ?? 0 };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : "Sync failed." };
+    }
+  },
+
+  async pullLatestFromSupabase(): Promise<PullResult> {
+    try {
+      const session = supabase.auth.getSession?.() ?? null;
+      const userId = session?.user?.id ?? supabase.auth.getUser?.()?.id ?? null;
+      if (!userId) return { success: false, error: "Not signed in" };
+
+      // Grab latest 60 workouts + latest 30 sleeps (tweak as needed)
+      const workoutsRes = await supabase
+        .from("workouts")
+        .select("*")
+        .eq("user_id", userId)
+        .order("workout_date", { ascending: false })
+        .limit(60)
+        .execute<any[]>();
+
+      if (workoutsRes.error) {
+        return { success: false, error: workoutsRes.error.message };
+      }
+
+      const sleepsRes = await supabase
+        .from("sleep_sessions")
+        .select("*")
+        .eq("user_id", userId)
+        .order("sleep_date", { ascending: false })
+        .limit(30)
+        .execute<any[]>();
+
+      if (sleepsRes.error) {
+        return { success: false, error: sleepsRes.error.message };
+      }
+
+      return { success: true, workouts: workoutsRes.data ?? [], sleeps: sleepsRes.data ?? [] };
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : "Failed to fetch data" };
     }
   },
 

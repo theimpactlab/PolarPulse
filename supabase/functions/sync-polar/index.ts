@@ -31,7 +31,11 @@ function isJsonContentType(res: Response): boolean {
   return ct.toLowerCase().includes("application/json");
 }
 
-async function fetchJsonOrThrow<T>(url: string, init: RequestInit, label: string): Promise<T> {
+async function fetchJsonOrThrow<T>(
+  url: string,
+  init: RequestInit,
+  label: string
+): Promise<T> {
   const res = await fetch(url, init);
 
   if (res.status === 204) {
@@ -58,11 +62,14 @@ async function fetchJsonOrThrow<T>(url: string, init: RequestInit, label: string
 }
 
 async function refreshTokenIfNeeded(supabase: any, userId: string, token: any): Promise<string> {
-  if (token?.expires_at && new Date(token.expires_at) > new Date()) return token.access_token;
+  // token.expires_at is timestamptz in your schema; may be null
+  if (token.expires_at && new Date(token.expires_at) > new Date()) return token.access_token;
 
   const clientId = Deno.env.get("POLAR_CLIENT_ID") ?? "";
   const clientSecret = Deno.env.get("POLAR_CLIENT_SECRET") ?? "";
   if (!clientId || !clientSecret) throw new Error("Missing POLAR_CLIENT_ID or POLAR_CLIENT_SECRET");
+
+  if (!token.refresh_token) throw new Error("Missing refresh_token for Polar");
 
   const res = await fetch("https://polarremote.com/v2/oauth2/token", {
     method: "POST",
@@ -106,7 +113,6 @@ async function syncExercises(
   polarUserId: number,
   accessToken: string
 ): Promise<number> {
-  // AccessLink requires numeric user id in the URL
   const tx = await fetchJsonOrThrow<any>(
     `https://www.polaraccesslink.com/v3/users/${polarUserId}/exercise-transactions`,
     {
@@ -157,11 +163,79 @@ async function syncExercises(
     synced++;
   }
 
-  // Commit transaction
   await fetchJsonOrThrow<any>(
     resourceUri,
     { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` } },
     "Polar exercise transaction commit"
+  );
+
+  return synced;
+}
+
+async function syncSleep(
+  supabase: any,
+  userId: string,
+  polarUserId: number,
+  accessToken: string
+): Promise<number> {
+  const tx = await fetchJsonOrThrow<any>(
+    `https://www.polaraccesslink.com/v3/users/${polarUserId}/sleep-transactions`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    },
+    "Polar sleep transaction create"
+  );
+
+  if (!tx) return 0;
+
+  const resourceUri = tx?.["resource-uri"];
+  if (!resourceUri || typeof resourceUri !== "string") {
+    throw new Error("Polar sleep transaction create: missing resource-uri");
+  }
+
+  const sleeps = await fetchJsonOrThrow<any>(
+    resourceUri,
+    { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
+    "Polar sleep transaction list"
+  );
+
+  const list: string[] = sleeps?.sleeps ?? [];
+  let synced = 0;
+
+  for (const sleepUrl of list) {
+    const sleep = await fetchJsonOrThrow<any>(
+      sleepUrl,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
+      "Polar sleep fetch"
+    );
+
+    const durationMins = Math.round(((sleep?.duration?.seconds ?? 0) as number) / 60);
+
+    await supabase.from("sleep_sessions").upsert(
+      {
+        user_id: userId,
+        polar_sleep_id: sleep?.id,
+        sleep_date: sleep?.date ?? null,
+        bedtime: sleep?.["sleep-start-time"] ?? null,
+        wake_time: sleep?.["sleep-end-time"] ?? null,
+        duration_minutes: durationMins,
+        deep_minutes: sleep?.hypnogram?.deep ?? null,
+        light_minutes: sleep?.hypnogram?.light ?? null,
+        rem_minutes: sleep?.hypnogram?.rem ?? null,
+        awake_minutes: sleep?.hypnogram?.awake ?? null,
+        raw_data: sleep,
+      },
+      { onConflict: "user_id,polar_sleep_id" }
+    );
+
+    synced++;
+  }
+
+  await fetchJsonOrThrow<any>(
+    resourceUri,
+    { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` } },
+    "Polar sleep transaction commit"
   );
 
   return synced;
@@ -186,12 +260,12 @@ Deno.serve(async (req) => {
       // ok
     }
 
-    if (!bodyUserId) return jsonResponse({ error: "No user found to sync (missing user_id in body)" }, 400);
+    if (!bodyUserId) {
+      return jsonResponse({ error: "No user found to sync (missing user_id in body)" }, 400);
+    }
 
-    const results: Array<{ user_id: string; success: boolean; synced?: number; error?: string }> =
-      [];
+    const results: Array<{ user_id: string; success: boolean; synced?: number; error?: string }> = [];
 
-    // Load tokens
     const { data: token } = await supabase
       .from("oauth_tokens")
       .select("*")
@@ -200,34 +274,48 @@ Deno.serve(async (req) => {
       .single();
 
     if (!token) {
-      results.push({ user_id: bodyUserId, success: false, error: "No Polar token found" });
-      return jsonResponse({ results });
+      return jsonResponse({ results: [{ user_id: bodyUserId, success: false, error: "No Polar token found" }] });
     }
 
-    // Load profiles.polar_user_id (AccessLink numeric id stored as text)
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("polar_user_id")
-      .eq("id", bodyUserId)
-      .single();
-
-    const polarUserIdText = profile?.polar_user_id ?? null;
-    const polarUserId = polarUserIdText ? Number(polarUserIdText) : NaN;
-
-    if (!polarUserIdText || !Number.isFinite(polarUserId)) {
-      results.push({
-        user_id: bodyUserId,
-        success: false,
-        error: "Missing Polar AccessLink user id. Please disconnect and reconnect Polar.",
+    // You said profiles.polar_user_id is populated, but sync uses oauth_tokens.polar_user_id (numeric).
+    // If you store the AccessLink numeric user-id in profiles.polar_user_id instead, switch to reading it here.
+    const polarUserIdRaw = token.polar_user_id;
+    if (!polarUserIdRaw) {
+      return jsonResponse({
+        results: [
+          {
+            user_id: bodyUserId,
+            success: false,
+            error: "Missing polar_user_id on oauth_tokens. Reconnect Polar so we can register with AccessLink.",
+          },
+        ],
       });
-      return jsonResponse({ results });
+    }
+
+    const polarUserId = Number(polarUserIdRaw);
+    if (!Number.isFinite(polarUserId)) {
+      return jsonResponse({
+        results: [
+          {
+            user_id: bodyUserId,
+            success: false,
+            error: `Invalid polar_user_id value: ${String(polarUserIdRaw)}`,
+          },
+        ],
+      });
     }
 
     try {
       const accessToken = await refreshTokenIfNeeded(supabase, bodyUserId, token);
-      const exercisesSynced = await syncExercises(supabase, bodyUserId, polarUserId, accessToken);
 
-      results.push({ user_id: bodyUserId, success: true, synced: exercisesSynced });
+      const exercisesSynced = await syncExercises(supabase, bodyUserId, polarUserId, accessToken);
+      const sleepSynced = await syncSleep(supabase, bodyUserId, polarUserId, accessToken);
+
+      results.push({
+        user_id: bodyUserId,
+        success: true,
+        synced: exercisesSynced + sleepSynced,
+      });
     } catch (e) {
       results.push({
         user_id: bodyUserId,
