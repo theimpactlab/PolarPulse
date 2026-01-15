@@ -1,10 +1,10 @@
-import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { generateAllMockData } from '@/lib/utils/mock-data';
-import { appleHealthService, isHealthAvailable } from '@/lib/services/apple-health';
-import { calculateStrainScore } from '@/lib/utils/scoring';
-import { polarOAuthService } from '@/lib/services/polar-oauth';
+import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { generateAllMockData } from "@/lib/utils/mock-data";
+import { appleHealthService, isHealthAvailable } from "@/lib/services/apple-health";
+import { calculateStrainScore } from "@/lib/utils/scoring";
+import { polarOAuthService } from "@/lib/services/polar-oauth";
 
 // Types
 export interface HRZone {
@@ -24,7 +24,7 @@ export interface Workout {
   strainScore?: number;
   polarId?: string;
   healthKitId?: string;
-  source: 'polar' | 'apple_health' | 'manual' | 'demo';
+  source: "polar" | "apple_health" | "manual" | "demo";
 }
 
 export interface SleepSession {
@@ -42,7 +42,7 @@ export interface SleepSession {
   };
   polarId?: string;
   healthKitId?: string;
-  source: 'polar' | 'apple_health' | 'manual' | 'demo';
+  source: "polar" | "apple_health" | "manual" | "demo";
 }
 
 export interface DailyMetrics {
@@ -56,7 +56,13 @@ export interface DailyMetrics {
   bodyBattery?: number;
   vo2Max?: number;
   trainingLoad?: number;
-  trainingLoadStatus?: 'detraining' | 'recovery' | 'maintaining' | 'productive' | 'peaking' | 'overreaching';
+  trainingLoadStatus?:
+    | "detraining"
+    | "recovery"
+    | "maintaining"
+    | "productive"
+    | "peaking"
+    | "overreaching";
   trainingReadiness?: number;
   sleepDebt?: number;
   bodyTempDeviation?: number;
@@ -86,21 +92,18 @@ export interface Baselines {
 
 export interface UserSettings {
   sleepGoalHours: number;
-  units: 'Metric' | 'Imperial';
+  units: "Metric" | "Imperial";
   notificationsEnabled: boolean;
 }
 
 export interface Insight {
   id: string;
   date: string;
-  type: 'recovery' | 'strain' | 'sleep' | 'general';
+  type: "recovery" | "strain" | "sleep" | "general";
   title: string;
   description: string;
-  priority: 'high' | 'medium' | 'low';
+  priority: "high" | "medium" | "low";
 }
-
-type Result = { success: boolean; error?: string };
-type SyncResult = { success: boolean; synced?: number; error?: string };
 
 interface AppState {
   // Connection state
@@ -121,6 +124,7 @@ interface AppState {
   baselines?: Baselines;
   insights: Insight[];
 
+  // New data for advanced metrics
   bodyBatteryHistory: BodyBatteryReading[];
   trainingLoadHistory: TrainingLoadHistory[];
 
@@ -128,13 +132,14 @@ interface AppState {
   userSettings: UserSettings;
 
   // Polar Actions
-  connectPolar: () => Promise<Result>;
-  disconnectPolar: () => Promise<Result>;
-  syncData: () => Promise<SyncResult>;
+  connectPolar: () => Promise<{ success: boolean; error?: string }>;
+  disconnectPolar: () => Promise<void>;
+  syncData: () => Promise<{ success: boolean; synced?: number; error?: string }>;
+  checkPolarConnection: () => Promise<{ success: boolean; connected: boolean; error?: string }>;
 
   // Apple Health Actions
   checkAppleHealthAvailability: () => void;
-  connectAppleHealth: () => Promise<Result>;
+  connectAppleHealth: () => Promise<{ success: boolean; error?: string }>;
   disconnectAppleHealth: () => void;
   syncAppleHealth: () => Promise<{ success: boolean; synced: number; error?: string }>;
 
@@ -157,7 +162,7 @@ interface AppState {
 
 const defaultSettings: UserSettings = {
   sleepGoalHours: 8,
-  units: 'Metric',
+  units: "Metric",
   notificationsEnabled: true,
 };
 
@@ -186,11 +191,27 @@ export const useAppStore = create<AppState>()(
         return result;
       },
 
+      checkPolarConnection: async () => {
+        try {
+          const res = await polarOAuthService.checkPolarConnection();
+          if (res.success) {
+            set({
+              isPolarConnected: res.connected,
+              polarUserId: res.polarUserId,
+            });
+          }
+          return { success: res.success, connected: res.connected, error: res.error };
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Failed to check Polar connection.";
+          return { success: false, connected: false, error: msg };
+        }
+      },
+
       disconnectPolar: async () => {
         try {
           await polarOAuthService.disconnectPolar();
         } catch {
-          // If server disconnect fails, still clear local state
+          // Still clear local state even if server call fails
         }
 
         set({
@@ -218,7 +239,7 @@ export const useAppStore = create<AppState>()(
 
       connectAppleHealth: async () => {
         if (!isHealthAvailable()) {
-          return { success: false, error: 'Apple Health is only available on iOS' };
+          return { success: false, error: "Apple Health is only available on iOS" };
         }
 
         try {
@@ -227,11 +248,11 @@ export const useAppStore = create<AppState>()(
             set({ isAppleHealthConnected: true, isDemoMode: false });
             return { success: true };
           }
-          return { success: false, error: 'Authorization denied' };
+          return { success: false, error: "Authorization denied" };
         } catch (error) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : 'Failed to connect',
+            error: error instanceof Error ? error.message : "Failed to connect",
           };
         }
       },
@@ -246,7 +267,7 @@ export const useAppStore = create<AppState>()(
       syncAppleHealth: async () => {
         const state = get();
         if (!state.isAppleHealthConnected) {
-          return { success: false, synced: 0, error: 'Not connected to Apple Health' };
+          return { success: false, synced: 0, error: "Not connected to Apple Health" };
         }
 
         try {
@@ -260,7 +281,7 @@ export const useAppStore = create<AppState>()(
             const workout: Workout = {
               id: `health_${hw.id}`,
               healthKitId: hw.id,
-              date: hw.startDate.split('T')[0],
+              date: hw.startDate.split("T")[0],
               type: hw.activityType,
               durationMinutes: hw.duration,
               calories: hw.totalEnergyBurned,
@@ -271,7 +292,7 @@ export const useAppStore = create<AppState>()(
                 hw.averageHeartRate || 120,
                 hw.maxHeartRate || 160
               ),
-              source: 'apple_health',
+              source: "apple_health",
             };
             get().addWorkout(workout);
             syncedCount++;
@@ -281,7 +302,7 @@ export const useAppStore = create<AppState>()(
 
           const sleepByDate: Record<string, typeof healthSleep> = {};
           for (const sample of healthSleep) {
-            const date = sample.startDate.split('T')[0];
+            const date = sample.startDate.split("T")[0];
             if (!sleepByDate[date]) sleepByDate[date] = [];
             sleepByDate[date].push(sample);
           }
@@ -294,21 +315,22 @@ export const useAppStore = create<AppState>()(
 
             for (const sample of samples) {
               const duration =
-                (new Date(sample.endDate).getTime() - new Date(sample.startDate).getTime()) / 60000;
+                (new Date(sample.endDate).getTime() - new Date(sample.startDate).getTime()) /
+                60000;
               totalMinutes += duration;
 
               switch (sample.value) {
-                case 'AWAKE':
+                case "AWAKE":
                   stages.awake += duration;
                   break;
-                case 'CORE':
-                case 'ASLEEP':
+                case "CORE":
+                case "ASLEEP":
                   stages.light += duration;
                   break;
-                case 'DEEP':
+                case "DEEP":
                   stages.deep += duration;
                   break;
-                case 'REM':
+                case "REM":
                   stages.rem += duration;
                   break;
               }
@@ -322,7 +344,7 @@ export const useAppStore = create<AppState>()(
               totalSleepMinutes: totalMinutes - stages.awake,
               timeInBedMinutes: totalMinutes,
               stages,
-              source: 'apple_health',
+              source: "apple_health",
             };
             get().addSleepSession(session);
             syncedCount++;
@@ -334,7 +356,7 @@ export const useAppStore = create<AppState>()(
           return {
             success: false,
             synced: 0,
-            error: error instanceof Error ? error.message : 'Sync failed',
+            error: error instanceof Error ? error.message : "Sync failed",
           };
         }
       },
@@ -373,7 +395,7 @@ export const useAppStore = create<AppState>()(
         const state = get();
         const workoutsCsv = state.workouts
           .map((w: Workout) => `${w.date},${w.type},${w.durationMinutes},${w.calories},${w.avgHR},${w.source}`)
-          .join('\n');
+          .join("\n");
         return `date,type,duration,calories,avgHR,source\n${workoutsCsv}`;
       },
 
@@ -406,7 +428,7 @@ export const useAppStore = create<AppState>()(
         })),
     }),
     {
-      name: 'polar-fitness-storage',
+      name: "polar-fitness-storage",
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         isPolarConnected: state.isPolarConnected,
