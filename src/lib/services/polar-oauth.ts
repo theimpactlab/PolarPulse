@@ -12,9 +12,9 @@ function getCallbackUrl(): string {
   return `${APP_WEB_URL}/polar-callback`;
 }
 
-function getUserIdOrNull(): string | null {
-  const session = supabase.auth.getSession?.() ?? null;
-  return session?.user?.id ?? supabase.auth.getUser?.()?.id ?? null;
+async function getUserIdOrNull(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user?.id ?? null;
 }
 
 async function pullLatestFromSupabaseImpl(): Promise<{
@@ -24,7 +24,7 @@ async function pullLatestFromSupabaseImpl(): Promise<{
   error?: string;
 }> {
   try {
-    const userId = getUserIdOrNull();
+    const userId = await getUserIdOrNull();
     if (!userId) return { success: false, error: 'Please sign in first.' };
 
     const workoutsRes = await supabase
@@ -64,13 +64,12 @@ async function pullLatestFromSupabaseImpl(): Promise<{
 export const polarOAuthService = {
   async startOAuthFlow(): Promise<Result> {
     try {
-      const userId = getUserIdOrNull();
+      const userId = await getUserIdOrNull();
       if (!userId) return { success: false, error: 'Please sign in before connecting Polar.' };
       if (!SUPABASE_URL) return { success: false, error: 'Missing EXPO_PUBLIC_SUPABASE_URL' };
 
       const redirectUrl = getCallbackUrl();
 
-      // Use the deployed edge function name you actually have: polar-auth
       const authorizeUrl =
         `${SUPABASE_URL}/functions/v1/polar-auth?user_id=${encodeURIComponent(userId)}` +
         `&redirect_url=${encodeURIComponent(redirectUrl)}`;
@@ -98,9 +97,24 @@ export const polarOAuthService = {
     // no-op
   },
 
+  async checkPolarConnection(): Promise<boolean> {
+    const userId = await getUserIdOrNull();
+    if (!userId) return false;
+
+    const { data, error } = await supabase
+      .from('oauth_tokens')
+      .select('user_id')
+      .eq('user_id', userId)
+      .eq('provider', 'polar')
+      .maybeSingle();
+
+    if (error) return false;
+    return !!data;
+  },
+
   async syncPolarData(): Promise<SyncResult> {
     try {
-      const userId = getUserIdOrNull();
+      const userId = await getUserIdOrNull();
       if (!userId) return { success: false, error: 'Please sign in before syncing.' };
 
       const { data, error } = await supabase.functions.invoke<{
@@ -119,7 +133,6 @@ export const polarOAuthService = {
     }
   },
 
-  // IMPORTANT: this is the function your app-store is calling
   async pullLatestFromSupabase(): Promise<{
     success: boolean;
     workouts?: any[];
@@ -131,7 +144,7 @@ export const polarOAuthService = {
 
   async disconnectPolar(): Promise<{ success: boolean; error?: string }> {
     try {
-      const userId = getUserIdOrNull();
+      const userId = await getUserIdOrNull();
       if (!userId) return { success: false, error: 'Please sign in first.' };
 
       const del = await supabase
@@ -156,5 +169,4 @@ export const polarOAuthService = {
   },
 };
 
-// TEMP: uncomment to verify bundle includes this function
 console.log('[polarOAuthService keys]', Object.keys(polarOAuthService));
