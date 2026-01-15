@@ -15,7 +15,7 @@ interface PolarTokens {
   access_token: string;
   refresh_token?: string;
   expires_in: number;
-  x_user_id?: string; // Polar Remote user id (string)
+  x_user_id?: string; // Polar Remote user id (not AccessLink numeric id)
 }
 
 function parseState(state: string): { userId: string; redirectUrl?: string } {
@@ -34,7 +34,7 @@ function getRedirectUrl(
   if (stateData.redirectUrl) {
     const url = new URL(stateData.redirectUrl);
     if (success) url.searchParams.set("polar", "connected");
-    else if (error) url.searchParams.set("error", error);
+    else url.searchParams.set("error", error || "unknown");
     return url.toString();
   }
 
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
     if (!clientId || !clientSecret) return jsonResponse({ error: "Polar not configured" }, 500);
     if (!supabaseUrl || !serviceRoleKey) return jsonResponse({ error: "Supabase not configured" }, 500);
 
-    // 1) Exchange code for Polar Remote tokens
+    // 1) Exchange code for tokens (Polar Remote OAuth)
     const tokenResponse = await fetch("https://polarremote.com/v2/oauth2/token", {
       method: "POST",
       headers: {
@@ -108,10 +108,9 @@ Deno.serve(async (req) => {
       return Response.redirect(getRedirectUrl(stateData, false, "token_exchange"));
     }
 
-    // 2) Register with Polar AccessLink to get numeric user-id
-    // IMPORTANT: without this, /v3/users/{id}/exercise-transactions will 404
-    let polarUserId: number | null = null;
-    let polarUserResourceUri: string | null = null;
+    // 2) Register user with Polar AccessLink to get numeric AccessLink user-id
+    // This is the key that must be used for /v3/users/{id}/... calls
+    let accesslinkUserId: number | null = null;
 
     const regRes = await fetch("https://www.polaraccesslink.com/v3/users", {
       method: "POST",
@@ -129,69 +128,47 @@ Deno.serve(async (req) => {
       try {
         const regJson = JSON.parse(regBodyText);
         const direct = regJson?.["user-id"];
-        const uri = regJson?.["resource-uri"];
-
-        if (typeof direct === "number") polarUserId = direct;
-
-        if (typeof uri === "string") {
-          polarUserResourceUri = uri;
-          if (!polarUserId) {
-            const match = uri.match(/\/v3\/users\/(\d+)/);
-            if (match) polarUserId = Number(match[1]);
-          }
+        if (typeof direct === "number") {
+          accesslinkUserId = direct;
+        } else {
+          const uri = regJson?.["resource-uri"];
+          const match = typeof uri === "string" ? uri.match(/\/v3\/users\/(\d+)/) : null;
+          if (match) accesslinkUserId = Number(match[1]);
         }
       } catch {
-        // ignore parse errors
+        // ignore parse fail
       }
     } else {
-      // If already registered, Polar often returns 409 conflict.
-      // In that case, you STILL need the numeric id to sync.
-      // Best approach: treat 409 as "already registered" and ask the user to reconnect only after we add a lookup.
       console.error("AccessLink registration failed:", regRes.status, regBodyText);
-
-      // If it's a 409 conflict, we can’t derive user-id from response reliably.
-      // We still store tokens so the user can retry once we implement a lookup method if needed.
-      if (regRes.status === 409) {
-        // Keep going, but we will return an error redirect because sync will fail without polarUserId
-      }
     }
 
-    // 3) Save tokens + ids to Supabase
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    const upsertPayload: Record<string, unknown> = {
-      user_id: userId,
-      provider: "polar",
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token ?? null,
-      expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-      polar_user_id: polarUserId,
-      polar_user_resource_uri: polarUserResourceUri,
-      polar_remote_user_id: tokens.x_user_id ?? null,
-      updated_at: new Date().toISOString(),
-    };
+    // 3) Save tokens
+    await supabase.from("oauth_tokens").upsert(
+      {
+        user_id: userId,
+        provider: "polar",
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,provider" }
+    );
 
-    const { error: upsertErr } = await supabase
-      .from("oauth_tokens")
-      .upsert(upsertPayload, { onConflict: "user_id,provider" });
-
-    if (upsertErr) {
-      console.error("oauth_tokens upsert failed:", upsertErr);
-      return Response.redirect(getRedirectUrl(stateData, false, "token_store_failed"));
-    }
-
-    // Optional: keep profile info too (only if these columns exist)
-    // If your profiles table doesn't have these fields, remove this block.
+    // 4) Save AccessLink numeric id into profiles.polar_user_id (as text)
+    // Your schema has polar_user_id text unique, so store it as String(...)
     await supabase
       .from("profiles")
       .update({
-        polar_connected_at: new Date().toISOString(),
-        polar_remote_user_id: tokens.x_user_id ?? null,
+        polar_user_id: accesslinkUserId ? String(accesslinkUserId) : null,
+        polar_connected_at: accesslinkUserId ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", userId);
 
-    // If we failed to obtain AccessLink numeric user id, syncing will fail
-    if (!polarUserId) {
+    if (!accesslinkUserId) {
       return Response.redirect(getRedirectUrl(stateData, false, "accesslink_register_failed"));
     }
 

@@ -29,7 +29,6 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    // Expect { user_id }
     let bodyUserId: string | null = null;
     try {
       const body = await req.json();
@@ -48,14 +47,16 @@ Deno.serve(async (req) => {
 
     if (delErr) return jsonResponse({ error: delErr.message }, 500);
 
-    // Optional: update profile if these columns exist
-    await supabase
+    const { error: profErr } = await supabase
       .from("profiles")
       .update({
+        polar_user_id: null,
         polar_connected_at: null,
-        polar_remote_user_id: null,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", bodyUserId);
+
+    if (profErr) return jsonResponse({ error: profErr.message }, 500);
 
     return jsonResponse({ success: true });
   } catch (e) {

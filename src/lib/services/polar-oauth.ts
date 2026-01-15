@@ -8,10 +8,7 @@ const APP_WEB_URL = process.env.EXPO_PUBLIC_APP_URL || "";
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 
 function getCallbackUrl(): string {
-  // Web deployment callback route in your app
   if (APP_WEB_URL) return `${APP_WEB_URL}/polar-callback`;
-
-  // If APP url not set, fail safely
   return "/polar-callback";
 }
 
@@ -27,7 +24,6 @@ export const polarOAuthService = {
 
       const redirectUrl = getCallbackUrl();
 
-      // Your edge function is polar-auth and expects user_id + redirect_url
       const authorizeUrl =
         `${SUPABASE_URL}/functions/v1/polar-auth` +
         `?user_id=${encodeURIComponent(userId)}` +
@@ -38,7 +34,6 @@ export const polarOAuthService = {
         return { success: true };
       }
 
-      // Native: you’d open with Linking.openURL(authorizeUrl)
       return { success: false, error: "Native connect not configured in this build." };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : "Failed to start OAuth." };
@@ -54,7 +49,7 @@ export const polarOAuthService = {
   },
 
   clearPendingOAuth(): void {
-    // no-op placeholder
+    // no-op
   },
 
   async syncPolarData(): Promise<SyncResult> {
@@ -89,3 +84,4 @@ export const polarOAuthService = {
       body: { user_id: userId },
     });
   },
+};
