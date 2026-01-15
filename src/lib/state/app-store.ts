@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { generateAllMockData } from '@/lib/utils/mock-data';
 import { appleHealthService, isHealthAvailable } from '@/lib/services/apple-health';
-import { calculateStrainScore, calculateSleepScore, calculateRecoveryScore } from '@/lib/utils/scoring';
+import { calculateStrainScore } from '@/lib/utils/scoring';
 import { polarOAuthService } from '@/lib/services/polar-oauth';
 
 // Types
@@ -53,26 +53,25 @@ export interface DailyMetrics {
   sleepConsistency: number;
   hrv?: number;
   rhr?: number;
-  // New Polar-style metrics
-  bodyBattery?: number;           // 0-100, energy reserve
-  vo2Max?: number;                // ml/kg/min, aerobic fitness
-  trainingLoad?: number;          // Accumulated load over 7 days
+  bodyBattery?: number;
+  vo2Max?: number;
+  trainingLoad?: number;
   trainingLoadStatus?: 'detraining' | 'recovery' | 'maintaining' | 'productive' | 'peaking' | 'overreaching';
-  trainingReadiness?: number;     // 0-100, readiness to train
-  sleepDebt?: number;             // Minutes of accumulated sleep debt
-  bodyTempDeviation?: number;     // Deviation from baseline in °C
+  trainingReadiness?: number;
+  sleepDebt?: number;
+  bodyTempDeviation?: number;
 }
 
 export interface BodyBatteryReading {
   timestamp: string;
-  value: number;  // 0-100
+  value: number;
 }
 
 export interface TrainingLoadHistory {
   date: string;
-  acuteLoad: number;    // 7-day load
-  chronicLoad: number;  // 28-day average
-  ratio: number;        // Acute:Chronic ratio
+  acuteLoad: number;
+  chronicLoad: number;
+  ratio: number;
 }
 
 export interface Baselines {
@@ -80,10 +79,9 @@ export interface Baselines {
   rhrBaseline: number;
   sleepDurationBaseline: number;
   strainBaseline: number;
-  // New baselines
   vo2MaxBaseline?: number;
-  bodyTempBaseline?: number;  // in °C
-  chronicTrainingLoad?: number;  // 28-day average
+  bodyTempBaseline?: number;
+  chronicTrainingLoad?: number;
 }
 
 export interface UserSettings {
@@ -100,6 +98,9 @@ export interface Insight {
   description: string;
   priority: 'high' | 'medium' | 'low';
 }
+
+type Result = { success: boolean; error?: string };
+type SyncResult = { success: boolean; synced?: number; error?: string };
 
 interface AppState {
   // Connection state
@@ -120,7 +121,6 @@ interface AppState {
   baselines?: Baselines;
   insights: Insight[];
 
-  // New data for advanced metrics
   bodyBatteryHistory: BodyBatteryReading[];
   trainingLoadHistory: TrainingLoadHistory[];
 
@@ -128,13 +128,13 @@ interface AppState {
   userSettings: UserSettings;
 
   // Polar Actions
-  connectPolar: () => Promise<{ success: boolean; error?: string }>;
-  disconnectPolar: () => Promise<void>;
-  syncData: () => Promise<{ success: boolean; synced?: number; error?: string }>;
+  connectPolar: () => Promise<Result>;
+  disconnectPolar: () => Promise<Result>;
+  syncData: () => Promise<SyncResult>;
 
   // Apple Health Actions
   checkAppleHealthAvailability: () => void;
-  connectAppleHealth: () => Promise<{ success: boolean; error?: string }>;
+  connectAppleHealth: () => Promise<Result>;
   disconnectAppleHealth: () => void;
   syncAppleHealth: () => Promise<{ success: boolean; synced: number; error?: string }>;
 
@@ -144,7 +144,7 @@ interface AppState {
   exportData: () => Promise<string>;
   updateSettings: (settings: Partial<UserSettings>) => void;
 
-  // Data setters (used by sync)
+  // Data setters
   setWorkouts: (workouts: Workout[]) => void;
   setSleepSessions: (sessions: SleepSession[]) => void;
   setDailyMetrics: (metrics: DailyMetrics[]) => void;
@@ -179,7 +179,6 @@ export const useAppStore = create<AppState>()(
 
       // Polar connection actions
       connectPolar: async () => {
-        // Initiate OAuth flow via backend
         const result = await polarOAuthService.startOAuthFlow();
         if (result.success) {
           set({ isPolarConnected: true, isDemoMode: false });
@@ -188,14 +187,22 @@ export const useAppStore = create<AppState>()(
       },
 
       disconnectPolar: async () => {
-        await polarOAuthService.disconnectPolar();
+        const result = await polarOAuthService.disconnectPolar();
+
+        if (!result.success) {
+          return result;
+        }
+
         set({
           isPolarConnected: false,
           isDemoMode: false,
           polarAccessToken: undefined,
           polarRefreshToken: undefined,
           polarUserId: undefined,
+          lastSyncDate: undefined,
         });
+
+        return { success: true };
       },
 
       syncData: async () => {
@@ -226,7 +233,7 @@ export const useAppStore = create<AppState>()(
         } catch (error) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : 'Failed to connect'
+            error: error instanceof Error ? error.message : 'Failed to connect',
           };
         }
       },
@@ -248,7 +255,6 @@ export const useAppStore = create<AppState>()(
           const thirtyDaysAgo = new Date();
           thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-          // Sync workouts
           const healthWorkouts = await appleHealthService.getWorkouts(thirtyDaysAgo);
           let syncedCount = 0;
 
@@ -262,17 +268,19 @@ export const useAppStore = create<AppState>()(
               calories: hw.totalEnergyBurned,
               avgHR: hw.averageHeartRate || 0,
               maxHR: hw.maxHeartRate || 0,
-              strainScore: calculateStrainScore(hw.duration, hw.averageHeartRate || 120, hw.maxHeartRate || 160),
+              strainScore: calculateStrainScore(
+                hw.duration,
+                hw.averageHeartRate || 120,
+                hw.maxHeartRate || 160
+              ),
               source: 'apple_health',
             };
             get().addWorkout(workout);
             syncedCount++;
           }
 
-          // Sync sleep
           const healthSleep = await appleHealthService.getSleepSamples(thirtyDaysAgo);
 
-          // Group sleep samples by night
           const sleepByDate: Record<string, typeof healthSleep> = {};
           for (const sample of healthSleep) {
             const date = sample.startDate.split('T')[0];
@@ -283,19 +291,28 @@ export const useAppStore = create<AppState>()(
           for (const [date, samples] of Object.entries(sleepByDate)) {
             const stages = { awake: 0, light: 0, deep: 0, rem: 0 };
             let totalMinutes = 0;
-            let bedtimeStart = samples[0]?.startDate;
-            let bedtimeEnd = samples[samples.length - 1]?.endDate;
+            const bedtimeStart = samples[0]?.startDate;
+            const bedtimeEnd = samples[samples.length - 1]?.endDate;
 
             for (const sample of samples) {
-              const duration = (new Date(sample.endDate).getTime() - new Date(sample.startDate).getTime()) / 60000;
+              const duration =
+                (new Date(sample.endDate).getTime() - new Date(sample.startDate).getTime()) / 60000;
               totalMinutes += duration;
 
               switch (sample.value) {
-                case 'AWAKE': stages.awake += duration; break;
+                case 'AWAKE':
+                  stages.awake += duration;
+                  break;
                 case 'CORE':
-                case 'ASLEEP': stages.light += duration; break;
-                case 'DEEP': stages.deep += duration; break;
-                case 'REM': stages.rem += duration; break;
+                case 'ASLEEP':
+                  stages.light += duration;
+                  break;
+                case 'DEEP':
+                  stages.deep += duration;
+                  break;
+                case 'REM':
+                  stages.rem += duration;
+                  break;
               }
             }
 
@@ -313,34 +330,13 @@ export const useAppStore = create<AppState>()(
             syncedCount++;
           }
 
-          // Update daily metrics with HRV and RHR
-          const today = new Date();
-          for (let i = 0; i < 7; i++) {
-            const date = new Date(today);
-            date.setDate(date.getDate() - i);
-            const summary = await appleHealthService.getDailySummary(date);
-
-            if (summary.hrv || summary.restingHeartRate) {
-              const dateStr = summary.date;
-              const existingMetric = state.dailyMetrics.find(m => m.date === dateStr);
-
-              if (existingMetric) {
-                get().updateDailyMetric({
-                  ...existingMetric,
-                  hrv: summary.hrv ?? existingMetric.hrv,
-                  rhr: summary.restingHeartRate ?? existingMetric.rhr,
-                });
-              }
-            }
-          }
-
           set({ lastAppleHealthSyncDate: new Date().toISOString() });
           return { success: true, synced: syncedCount };
         } catch (error) {
           return {
             success: false,
             synced: 0,
-            error: error instanceof Error ? error.message : 'Sync failed'
+            error: error instanceof Error ? error.message : 'Sync failed',
           };
         }
       },
@@ -377,7 +373,6 @@ export const useAppStore = create<AppState>()(
 
       exportData: async () => {
         const state = get();
-        // Generate CSV of all data
         const workoutsCsv = state.workouts
           .map((w: Workout) => `${w.date},${w.type},${w.durationMinutes},${w.calories},${w.avgHR},${w.source}`)
           .join('\n');
@@ -409,10 +404,7 @@ export const useAppStore = create<AppState>()(
 
       updateDailyMetric: (metric) =>
         set((state) => ({
-          dailyMetrics: [
-            ...state.dailyMetrics.filter((m: DailyMetrics) => m.date !== metric.date),
-            metric,
-          ],
+          dailyMetrics: [...state.dailyMetrics.filter((m: DailyMetrics) => m.date !== metric.date), metric],
         })),
     }),
     {

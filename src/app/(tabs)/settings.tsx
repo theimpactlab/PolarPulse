@@ -101,22 +101,25 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleDisconnectPolar = () => {
-    Alert.alert(
-      'Disconnect Polar',
-      'This will disconnect your Polar account. Your historical data will be preserved.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: isDisconnectingPolar ? 'Disconnecting...' : 'Disconnect',
-          style: 'destructive',
-          onPress: () => {
-            void performDisconnectPolar();
-          },
+const handleDisconnectPolar = () => {
+  Alert.alert(
+    'Disconnect Polar',
+    'This will disconnect your Polar account. Your historical data will be preserved.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: async () => {
+          const res = await disconnectPolar();
+          if (!res.success) {
+            Alert.alert('Disconnect Failed', res.error || 'Unable to disconnect Polar.');
+          }
         },
-      ]
-    );
-  };
+      },
+    ]
+  );
+};
 
   const handleSyncPolar = async () => {
     setIsSyncing(true);
