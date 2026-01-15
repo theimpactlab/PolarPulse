@@ -7,7 +7,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
 };
 
@@ -15,7 +16,7 @@ interface PolarTokens {
   access_token: string;
   refresh_token?: string;
   expires_in: number;
-  x_user_id?: string; // Polar Remote user id (not AccessLink numeric id)
+  x_user_id?: string; // Polar "remote user id" (not AccessLink numeric id)
 }
 
 function parseState(state: string): { userId: string; redirectUrl?: string } {
@@ -58,6 +59,21 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+function extractAccessLinkUserId(regBodyText: string): number | null {
+  try {
+    const regJson = JSON.parse(regBodyText);
+    const direct = regJson?.["user-id"];
+    if (typeof direct === "number") return direct;
+
+    const uri = regJson?.["resource-uri"];
+    const match = typeof uri === "string" ? uri.match(/\/v3\/users\/(\d+)/) : null;
+    if (match) return Number(match[1]);
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -82,7 +98,7 @@ Deno.serve(async (req) => {
     if (!clientId || !clientSecret) return jsonResponse({ error: "Polar not configured" }, 500);
     if (!supabaseUrl || !serviceRoleKey) return jsonResponse({ error: "Supabase not configured" }, 500);
 
-    // 1) Exchange code for tokens (Polar Remote OAuth)
+    // 1) Exchange code for tokens
     const tokenResponse = await fetch("https://polarremote.com/v2/oauth2/token", {
       method: "POST",
       headers: {
@@ -108,8 +124,7 @@ Deno.serve(async (req) => {
       return Response.redirect(getRedirectUrl(stateData, false, "token_exchange"));
     }
 
-    // 2) Register user with Polar AccessLink to get numeric AccessLink user-id
-    // This is the key that must be used for /v3/users/{id}/... calls
+    // 2) Register user with Polar AccessLink -> numeric user-id
     let accesslinkUserId: number | null = null;
 
     const regRes = await fetch("https://www.polaraccesslink.com/v3/users", {
@@ -125,49 +140,50 @@ Deno.serve(async (req) => {
     const regBodyText = await readTextSafe(regRes);
 
     if (regRes.ok) {
-      try {
-        const regJson = JSON.parse(regBodyText);
-        const direct = regJson?.["user-id"];
-        if (typeof direct === "number") {
-          accesslinkUserId = direct;
-        } else {
-          const uri = regJson?.["resource-uri"];
-          const match = typeof uri === "string" ? uri.match(/\/v3\/users\/(\d+)/) : null;
-          if (match) accesslinkUserId = Number(match[1]);
-        }
-      } catch {
-        // ignore parse fail
-      }
+      accesslinkUserId = extractAccessLinkUserId(regBodyText);
     } else {
       console.error("AccessLink registration failed:", regRes.status, regBodyText);
     }
 
+    // 3) Save tokens + polar_user_id into oauth_tokens
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    // 3) Save tokens
-    await supabase.from("oauth_tokens").upsert(
+    const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+
+    const upsertTokenRes = await supabase.from("oauth_tokens").upsert(
       {
         user_id: userId,
         provider: "polar",
         access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+        refresh_token: tokens.refresh_token ?? null,
+        expires_at: expiresAt,
+        polar_user_id: accesslinkUserId, // BIG FIX: store numeric AccessLink user-id here
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id,provider" }
     );
 
-    // 4) Save AccessLink numeric id into profiles.polar_user_id (as text)
-    // Your schema has polar_user_id text unique, so store it as String(...)
-    await supabase
+    if (upsertTokenRes.error) {
+      console.error("oauth_tokens upsert failed:", upsertTokenRes.error);
+      return Response.redirect(getRedirectUrl(stateData, false, "db_write_failed"));
+    }
+
+    // 4) Store connection marker on profiles (keep it as text)
+    const profileUpdate = await supabase
       .from("profiles")
       .update({
+        polar_connected_at: new Date().toISOString(),
         polar_user_id: accesslinkUserId ? String(accesslinkUserId) : null,
-        polar_connected_at: accesslinkUserId ? new Date().toISOString() : null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", userId);
 
+    if (profileUpdate.error) {
+      console.error("profiles update failed:", profileUpdate.error);
+      // not fatal
+    }
+
+    // If AccessLink registration failed, surface it so user reconnects after fix
     if (!accesslinkUserId) {
       return Response.redirect(getRedirectUrl(stateData, false, "accesslink_register_failed"));
     }

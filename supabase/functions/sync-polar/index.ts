@@ -7,7 +7,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
 
@@ -39,7 +40,7 @@ async function fetchJsonOrThrow<T>(
   const res = await fetch(url, init);
 
   if (res.status === 204) {
-    // @ts-expect-error allow null for 204
+    // @ts-expect-error allow null
     return null;
   }
 
@@ -61,15 +62,16 @@ async function fetchJsonOrThrow<T>(
   }
 }
 
-async function refreshTokenIfNeeded(supabase: any, userId: string, token: any): Promise<string> {
-  // token.expires_at is timestamptz in your schema; may be null
+async function refreshTokenIfNeeded(
+  supabase: any,
+  userId: string,
+  token: any
+): Promise<string> {
   if (token.expires_at && new Date(token.expires_at) > new Date()) return token.access_token;
 
   const clientId = Deno.env.get("POLAR_CLIENT_ID") ?? "";
   const clientSecret = Deno.env.get("POLAR_CLIENT_SECRET") ?? "";
   if (!clientId || !clientSecret) throw new Error("Missing POLAR_CLIENT_ID or POLAR_CLIENT_SECRET");
-
-  if (!token.refresh_token) throw new Error("Missing refresh_token for Polar");
 
   const res = await fetch("https://polarremote.com/v2/oauth2/token", {
     method: "POST",
@@ -117,7 +119,10 @@ async function syncExercises(
     `https://www.polaraccesslink.com/v3/users/${polarUserId}/exercise-transactions`,
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
     },
     "Polar exercise transaction create"
   );
@@ -172,75 +177,6 @@ async function syncExercises(
   return synced;
 }
 
-async function syncSleep(
-  supabase: any,
-  userId: string,
-  polarUserId: number,
-  accessToken: string
-): Promise<number> {
-  const tx = await fetchJsonOrThrow<any>(
-    `https://www.polaraccesslink.com/v3/users/${polarUserId}/sleep-transactions`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
-    },
-    "Polar sleep transaction create"
-  );
-
-  if (!tx) return 0;
-
-  const resourceUri = tx?.["resource-uri"];
-  if (!resourceUri || typeof resourceUri !== "string") {
-    throw new Error("Polar sleep transaction create: missing resource-uri");
-  }
-
-  const sleeps = await fetchJsonOrThrow<any>(
-    resourceUri,
-    { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
-    "Polar sleep transaction list"
-  );
-
-  const list: string[] = sleeps?.sleeps ?? [];
-  let synced = 0;
-
-  for (const sleepUrl of list) {
-    const sleep = await fetchJsonOrThrow<any>(
-      sleepUrl,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
-      "Polar sleep fetch"
-    );
-
-    const durationMins = Math.round(((sleep?.duration?.seconds ?? 0) as number) / 60);
-
-    await supabase.from("sleep_sessions").upsert(
-      {
-        user_id: userId,
-        polar_sleep_id: sleep?.id,
-        sleep_date: sleep?.date ?? null,
-        bedtime: sleep?.["sleep-start-time"] ?? null,
-        wake_time: sleep?.["sleep-end-time"] ?? null,
-        duration_minutes: durationMins,
-        deep_minutes: sleep?.hypnogram?.deep ?? null,
-        light_minutes: sleep?.hypnogram?.light ?? null,
-        rem_minutes: sleep?.hypnogram?.rem ?? null,
-        awake_minutes: sleep?.hypnogram?.awake ?? null,
-        raw_data: sleep,
-      },
-      { onConflict: "user_id,polar_sleep_id" }
-    );
-
-    synced++;
-  }
-
-  await fetchJsonOrThrow<any>(
-    resourceUri,
-    { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` } },
-    "Polar sleep transaction commit"
-  );
-
-  return synced;
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -274,32 +210,32 @@ Deno.serve(async (req) => {
       .single();
 
     if (!token) {
-      return jsonResponse({ results: [{ user_id: bodyUserId, success: false, error: "No Polar token found" }] });
-    }
-
-    // You said profiles.polar_user_id is populated, but sync uses oauth_tokens.polar_user_id (numeric).
-    // If you store the AccessLink numeric user-id in profiles.polar_user_id instead, switch to reading it here.
-    const polarUserIdRaw = token.polar_user_id;
-    if (!polarUserIdRaw) {
       return jsonResponse({
-        results: [
-          {
-            user_id: bodyUserId,
-            success: false,
-            error: "Missing polar_user_id on oauth_tokens. Reconnect Polar so we can register with AccessLink.",
-          },
-        ],
+        results: [{ user_id: bodyUserId, success: false, error: "No Polar token found" }],
       });
     }
 
-    const polarUserId = Number(polarUserIdRaw);
-    if (!Number.isFinite(polarUserId)) {
+    // ✅ Prefer oauth_tokens.polar_user_id, but fallback to profiles.polar_user_id
+    let polarUserId: number | null = token.polar_user_id ? Number(token.polar_user_id) : null;
+
+    if (!polarUserId) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("polar_user_id")
+        .eq("id", bodyUserId)
+        .single();
+
+      if (profile?.polar_user_id) polarUserId = Number(profile.polar_user_id);
+    }
+
+    if (!polarUserId) {
       return jsonResponse({
         results: [
           {
             user_id: bodyUserId,
             success: false,
-            error: `Invalid polar_user_id value: ${String(polarUserIdRaw)}`,
+            error:
+              "Missing polar_user_id on oauth_tokens. Reconnect Polar so we can register with AccessLink.",
           },
         ],
       });
@@ -307,15 +243,8 @@ Deno.serve(async (req) => {
 
     try {
       const accessToken = await refreshTokenIfNeeded(supabase, bodyUserId, token);
-
       const exercisesSynced = await syncExercises(supabase, bodyUserId, polarUserId, accessToken);
-      const sleepSynced = await syncSleep(supabase, bodyUserId, polarUserId, accessToken);
-
-      results.push({
-        user_id: bodyUserId,
-        success: true,
-        synced: exercisesSynced + sleepSynced,
-      });
+      results.push({ user_id: bodyUserId, success: true, synced: exercisesSynced });
     } catch (e) {
       results.push({
         user_id: bodyUserId,

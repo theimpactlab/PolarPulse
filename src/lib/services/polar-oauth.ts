@@ -3,19 +3,13 @@ import { supabase } from "@/lib/supabase/client";
 
 type Result = { success: boolean; error?: string };
 type SyncResult = { success: boolean; synced?: number; error?: string };
-type PullResult = {
-  success: boolean;
-  workouts?: any[];
-  sleeps?: any[];
-  error?: string;
-};
 
 const APP_WEB_URL = process.env.EXPO_PUBLIC_APP_URL || "";
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 
 function getCallbackUrl(): string {
-  if (APP_WEB_URL) return `${APP_WEB_URL}/polar-callback`;
-  return "/polar-callback";
+  if (Platform.OS === "web" && APP_WEB_URL) return `${APP_WEB_URL}/polar-callback`;
+  return `${APP_WEB_URL}/polar-callback`;
 }
 
 export const polarOAuthService = {
@@ -26,14 +20,14 @@ export const polarOAuthService = {
 
       if (!userId) return { success: false, error: "Please sign in before connecting Polar." };
       if (!SUPABASE_URL) return { success: false, error: "Missing EXPO_PUBLIC_SUPABASE_URL" };
-      if (!APP_WEB_URL) return { success: false, error: "Missing EXPO_PUBLIC_APP_URL" };
 
       const redirectUrl = getCallbackUrl();
+      const state = `${userId}|${encodeURIComponent(redirectUrl)}`;
 
-      const authorizeUrl =
-        `${SUPABASE_URL}/functions/v1/polar-auth` +
-        `?user_id=${encodeURIComponent(userId)}` +
-        `&redirect_url=${encodeURIComponent(redirectUrl)}`;
+      // Your edge function name in repo is polar-auth (not polar-start)
+      const authorizeUrl = `${SUPABASE_URL}/functions/v1/polar-auth?user_id=${encodeURIComponent(
+        userId
+      )}&redirect_url=${encodeURIComponent(redirectUrl)}`;
 
       if (Platform.OS === "web" && typeof window !== "undefined") {
         window.location.href = authorizeUrl;
@@ -56,6 +50,29 @@ export const polarOAuthService = {
 
   clearPendingOAuth(): void {
     // no-op
+  },
+
+  // ✅ This stops your console error
+  async checkPolarConnection(): Promise<{ connected: boolean; polarUserId?: string; error?: string }> {
+    try {
+      const session = supabase.auth.getSession?.() ?? null;
+      const userId = session?.user?.id ?? supabase.auth.getUser?.()?.id ?? null;
+      if (!userId) return { connected: false };
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("polar_user_id, polar_connected_at")
+        .eq("id", userId)
+        .single()
+        .execute();
+
+      if (error) return { connected: false, error: error.message };
+
+      const polarUserId = (data as any)?.polar_user_id as string | undefined;
+      return { connected: !!polarUserId, polarUserId };
+    } catch (e) {
+      return { connected: false, error: e instanceof Error ? e.message : "Failed to check connection" };
+    }
   },
 
   async syncPolarData(): Promise<SyncResult> {
@@ -81,50 +98,35 @@ export const polarOAuthService = {
     }
   },
 
-  async pullLatestFromSupabase(): Promise<PullResult> {
+  // ✅ Makes the disconnect button actually do something server-side
+  async disconnectPolar(): Promise<Result> {
     try {
       const session = supabase.auth.getSession?.() ?? null;
       const userId = session?.user?.id ?? supabase.auth.getUser?.()?.id ?? null;
-      if (!userId) return { success: false, error: "Not signed in" };
+      if (!userId) return { success: false, error: "Not signed in." };
 
-      // Grab latest 60 workouts + latest 30 sleeps (tweak as needed)
-      const workoutsRes = await supabase
-        .from("workouts")
-        .select("*")
+      // Delete tokens
+      const del = await supabase
+        .from("oauth_tokens")
+        .delete()
         .eq("user_id", userId)
-        .order("workout_date", { ascending: false })
-        .limit(60)
-        .execute<any[]>();
+        .eq("provider", "polar")
+        .execute();
 
-      if (workoutsRes.error) {
-        return { success: false, error: workoutsRes.error.message };
-      }
+      if (del.error) return { success: false, error: del.error.message };
 
-      const sleepsRes = await supabase
-        .from("sleep_sessions")
-        .select("*")
-        .eq("user_id", userId)
-        .order("sleep_date", { ascending: false })
-        .limit(30)
-        .execute<any[]>();
+      // Clear profile markers
+      const upd = await supabase
+        .from("profiles")
+        .update({ polar_user_id: null, polar_connected_at: null, updated_at: new Date().toISOString() })
+        .eq("id", userId)
+        .execute();
 
-      if (sleepsRes.error) {
-        return { success: false, error: sleepsRes.error.message };
-      }
+      if (upd.error) return { success: false, error: upd.error.message };
 
-      return { success: true, workouts: workoutsRes.data ?? [], sleeps: sleepsRes.data ?? [] };
+      return { success: true };
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : "Failed to fetch data" };
+      return { success: false, error: e instanceof Error ? e.message : "Disconnect failed." };
     }
-  },
-
-  async disconnectPolar(): Promise<void> {
-    const session = supabase.auth.getSession?.() ?? null;
-    const userId = session?.user?.id ?? supabase.auth.getUser?.()?.id ?? null;
-    if (!userId) return;
-
-    await supabase.functions.invoke<{ success: boolean }>("polar-disconnect", {
-      body: { user_id: userId },
-    });
   },
 };
