@@ -9,7 +9,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": 
     "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods":  "POST,OPTIONS",
+  "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
 
 async function readTextSafe(res: Response): Promise<string> {
@@ -99,7 +99,7 @@ async function refreshTokenIfNeeded(
     .from("oauth_tokens")
     .update({
       access_token: newTokens.access_token,
-      refresh_token: newTokens.refresh_token || token.refresh_token,
+      refresh_token: newTokens. refresh_token || token.refresh_token,
       expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
       updated_at: new Date().toISOString(),
     })
@@ -154,7 +154,7 @@ async function syncExercises(
       {
         user_id: userId,
         polar_exercise_id: exercise?. id,
-        workout_date: String(exercise?.["start-time"] ?? "").split("T")[0] || null,
+        workout_date:  String(exercise?.["start-time"] ?? "").split("T")[0] || null,
         workout_type: exercise?.sport || "workout",
         duration_minutes: Math.round(((exercise?.duration?. seconds ?? 0) as number) / 60),
         calories:  exercise?.calories ?? null,
@@ -177,17 +177,22 @@ async function syncExercises(
   return synced;
 }
 
-// ✅ CORRECTED: Sleep sync function (fixed endpoint and response mapping)
+// ✅ FIXED: Sleep sync with comprehensive logging
 async function syncSleep(
-  supabase: any,
+  supabase:  any,
   userId: string,
   polarUserId: number,
-  accessToken:  string
+  accessToken: string
 ): Promise<number> {
   try {
-    // ✅ Use /nights endpoint directly (no transactions for sleep)
+    console.log(`[syncSleep] Starting sleep sync for user ${userId}, polarUserId: ${polarUserId}`);
+
+    // ✅ Try the /nights endpoint first (direct list)
+    const nightsUrl = `https://www.polaraccesslink.com/v3/users/${polarUserId}/nights`;
+    console.log(`[syncSleep] Fetching from ${nightsUrl}`);
+
     const sleepResponse = await fetchJsonOrThrow<any>(
-      `https://www.polaraccesslink.com/v3/users/${polarUserId}/nights`,
+      nightsUrl,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -197,51 +202,81 @@ async function syncSleep(
       "Polar nights fetch"
     );
 
-    if (!sleepResponse) return 0;
+    console.log(`[syncSleep] Sleep response: `, JSON.stringify(sleepResponse));
 
-    // ✅ Response structure has 'nights' array, not 'sleep'
-    const nightsList: string[] = sleepResponse?. nights ?? [];
+    if (!sleepResponse) {
+      console.log(`[syncSleep] Empty response from /nights`);
+      return 0;
+    }
+
+    // ✅ Response can be either { nights: [...] } or directly an array of URLs
+    let nightsList: string[] = [];
+
+    if (Array.isArray(sleepResponse)) {
+      nightsList = sleepResponse;
+      console.log(`[syncSleep] Response is array, ${nightsList.length} nights`);
+    } else if (sleepResponse?.nights) {
+      nightsList = sleepResponse.nights;
+      console.log(`[syncSleep] Response has nights property, ${nightsList.length} nights`);
+    } else {
+      console.log(`[syncSleep] Unexpected response structure: `, Object.keys(sleepResponse));
+      return 0;
+    }
+
     let synced = 0;
 
     for (const nightUrl of nightsList) {
-      // ✅ Each night is a URL, fetch the details
-      const night = await fetchJsonOrThrow<any>(
-        nightUrl,
-        { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
-        "Polar night detail fetch"
-      );
+      try {
+        console.log(`[syncSleep] Fetching night: ${nightUrl}`);
 
-      if (!night) continue;
+        const night = await fetchJsonOrThrow<any>(
+          nightUrl,
+          { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
+          "Polar night detail fetch"
+        );
 
-      // ✅ Correct data mapping from Polar API
-      await supabase.from("sleep_sessions").upsert(
-        {
+        console.log(`[syncSleep] Night data:`, JSON.stringify(night));
+
+        if (!night) {
+          console. log(`[syncSleep] Empty night data`);
+          continue;
+        }
+
+        // ✅ Correct data mapping from Polar API
+        const sleepData = {
           user_id: userId,
-          polar_sleep_id: night?.id,
-          // Extract date from night-time. start
-          sleep_date: String(night?.["night-time"]?.start ?? "").split("T")[0] || null,
+          polar_sleep_id: night?. id,
+          sleep_date:  String(night?.["night-time"]?.start ?? "").split("T")[0] || null,
           bedtime: night?.["night-time"]?.start ?? null,
           wake_time: night?.["night-time"]?.end ?? null,
-          // Duration is in seconds, convert to minutes
           duration_minutes: Math.round(((night?.duration ??  0) / 60)),
-          // Sleep stages:  deep, light, rem, awake (in seconds, convert to minutes)
-          deep_minutes: Math.round((night?.["sleep-stages"]?. deep ?? 0) / 60),
+          deep_minutes: Math.round((night?.["sleep-stages"]?.deep ?? 0) / 60),
           light_minutes: Math.round((night?.["sleep-stages"]?.light ?? 0) / 60),
-          rem_minutes: Math.round((night?. ["sleep-stages"]?.rem ??  0) / 60),
-          awake_minutes: Math. round((night?.["sleep-stages"]?.awake ?? 0) / 60),
+          rem_minutes: Math.round((night?.["sleep-stages"]?. rem ?? 0) / 60),
+          awake_minutes: Math.round((night?.["sleep-stages"]?. awake ?? 0) / 60),
           sleep_score: night?.["sleep-score"] ?? null,
           raw_data: night,
-        },
-        { onConflict:  "user_id,polar_sleep_id" }
-      );
+        };
 
-      synced++;
+        console.log(`[syncSleep] Upserting sleep data: `, JSON.stringify(sleepData));
+
+        await supabase.from("sleep_sessions").upsert(
+          sleepData,
+          { onConflict: "user_id,polar_sleep_id" }
+        );
+
+        synced++;
+        console.log(`[syncSleep] Successfully upserted night ${synced}`);
+      } catch (nightError) {
+        console.error(`[syncSleep] Error processing night: `, nightError);
+        continue;
+      }
     }
 
+    console.log(`[syncSleep] Sync complete, ${synced} nights synced`);
     return synced;
   } catch (e) {
-    console.error("Sleep sync error:", e);
-    // Return 0 instead of throwing, so exercise sync still completes
+    console.error("[syncSleep] Fatal error:", e);
     return 0;
   }
 }
@@ -260,19 +295,19 @@ Deno.serve(async (req) => {
     let bodyUserId: string | null = null;
     try {
       const body = await req.json();
-      bodyUserId = body?. user_id ?? null;
+      bodyUserId = body?. user_id ??  null;
     } catch {
       // ok
     }
 
     if (!bodyUserId) {
-      return jsonResponse({ error:  "No user found to sync (missing user_id in body)" }, 400);
+      return jsonResponse({ error: "No user found to sync (missing user_id in body)" }, 400);
     }
 
     const results:  Array<{ user_id: string; success: boolean; synced?:  number; error?: string }> = [];
 
     const { data: token } = await supabase
-      .from("oauth_tokens")
+      . from("oauth_tokens")
       .select("*")
       .eq("user_id", bodyUserId)
       .eq("provider", "polar")
@@ -280,7 +315,7 @@ Deno.serve(async (req) => {
 
     if (!token) {
       return jsonResponse({
-        results: [{ user_id: bodyUserId, success: false, error: "No Polar token found" }],
+        results:  [{ user_id: bodyUserId, success: false, error: "No Polar token found" }],
       });
     }
 
@@ -298,11 +333,11 @@ Deno.serve(async (req) => {
 
     if (!polarUserId) {
       return jsonResponse({
-        results:  [
+        results: [
           {
             user_id: bodyUserId,
             success: false,
-            error:  "Missing polar_user_id on oauth_tokens.  Reconnect Polar so we can register with AccessLink.",
+            error: "Missing polar_user_id on oauth_tokens.  Reconnect Polar so we can register with AccessLink.",
           },
         ],
       });
@@ -320,13 +355,13 @@ Deno.serve(async (req) => {
       results.push({
         user_id: bodyUserId,
         success: false,
-        error: e instanceof Error ? e. message : String(e),
+        error: e instanceof Error ? e.message : String(e),
       });
     }
 
     return jsonResponse({ results });
   } catch (e) {
-    return jsonResponse({ error: e instanceof Error ?  e.message : String(e) }, 500);
+    return jsonResponse({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
 });
 
