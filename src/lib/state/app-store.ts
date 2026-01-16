@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { isHealthAvailable, appleHealthService } from '@/lib/services/apple-health-service';
 import { polarOAuthService } from '@/lib/services/polar-oauth';
 
 export interface Workout {
