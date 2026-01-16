@@ -9,7 +9,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": 
     "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST,OPTIONS",
+  "Access-Control-Allow-Methods":  "POST,OPTIONS",
 };
 
 async function readTextSafe(res: Response): Promise<string> {
@@ -99,7 +99,7 @@ async function refreshTokenIfNeeded(
     .from("oauth_tokens")
     .update({
       access_token: newTokens.access_token,
-      refresh_token: newTokens. refresh_token || token.refresh_token,
+      refresh_token: newTokens.refresh_token || token.refresh_token,
       expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
       updated_at: new Date().toISOString(),
     })
@@ -127,7 +127,7 @@ async function syncExercises(
     "Polar exercise transaction create"
   );
 
-  if (!tx) return 0;
+  if (! tx) return 0;
 
   const resourceUri = tx?. ["resource-uri"];
   if (!resourceUri || typeof resourceUri !== "string") {
@@ -154,7 +154,7 @@ async function syncExercises(
       {
         user_id: userId,
         polar_exercise_id: exercise?. id,
-        workout_date:  String(exercise?.["start-time"] ?? "").split("T")[0] || null,
+        workout_date: String(exercise?.["start-time"] ?? "").split("T")[0] || null,
         workout_type: exercise?.sport || "workout",
         duration_minutes: Math.round(((exercise?.duration?. seconds ?? 0) as number) / 60),
         calories:  exercise?.calories ?? null,
@@ -177,7 +177,7 @@ async function syncExercises(
   return synced;
 }
 
-// ✅ CORRECTED: Use transaction-based sleep endpoint (like exercises)
+// ✅ CORRECTED: Direct sleep endpoint (NOT transaction-based)
 async function syncSleep(
   supabase: any,
   userId: string,
@@ -185,101 +185,65 @@ async function syncSleep(
   accessToken: string
 ): Promise<number> {
   try {
-    console.log(`[syncSleep] Starting sleep sync for user ${userId}, polarUserId: ${polarUserId}`);
+    console.log(`[syncSleep] Starting sleep sync for user ${userId}`);
 
-    // ✅ Create a sleep transaction (same pattern as exercises)
-    const txUrl = `https://www.polaraccesslink.com/v3/users/${polarUserId}/sleep-transactions`;
-    console.log(`[syncSleep] Creating transaction at ${txUrl}`);
+    // ✅ Use direct endpoint:  GET /v3/users/sleep (returns { nights: [...] })
+    const sleepUrl = "https://www.polaraccesslink.com/v3/users/sleep";
+    console.log(`[syncSleep] Fetching from ${sleepUrl}`);
 
-    const tx = await fetchJsonOrThrow<any>(
-      txUrl,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/json",
-        },
-      },
-      "Polar sleep transaction create"
-    );
-
-    console.log(`[syncSleep] Transaction response: `, JSON.stringify(tx));
-
-    if (!tx) {
-      console.log(`[syncSleep] No transaction response`);
-      return 0;
-    }
-
-    // ✅ Get the resource URI from transaction response
-    const resourceUri = tx?. ["resource-uri"];
-    if (!resourceUri || typeof resourceUri !== "string") {
-      console.log(`[syncSleep] Missing resource-uri in transaction`);
-      return 0;
-    }
-
-    console.log(`[syncSleep] Resource URI: ${resourceUri}`);
-
-    // ✅ Fetch the sleep data list
-    const sleepData = await fetchJsonOrThrow<any>(
-      resourceUri,
+    const sleepResponse = await fetchJsonOrThrow<any>(
+      sleepUrl,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/json",
         },
       },
-      "Polar sleep transaction list"
+      "Polar sleep fetch"
     );
 
-    console.log(`[syncSleep] Sleep data response:`, JSON.stringify(sleepData));
+    console.log(`[syncSleep] Sleep response keys: ${Object.keys(sleepResponse ??  {})}`);
 
-    // ✅ The response should have a 'sleep' array containing URLs to individual nights
-    const nightsList:  string[] = sleepData?.sleep ??  [];
+    if (!sleepResponse) {
+      console.log(`[syncSleep] Empty response`);
+      return 0;
+    }
+
+    // ✅ Response has 'nights' array with full sleep data inline
+    const nightsList:  any[] = sleepResponse?. nights ?? [];
     console.log(`[syncSleep] Found ${nightsList.length} nights`);
 
     let synced = 0;
 
-    for (const nightUrl of nightsList) {
+    for (const night of nightsList) {
       try {
-        console.log(`[syncSleep] Fetching night: ${nightUrl}`);
+        console.log(`[syncSleep] Processing night for date: ${night?. date}`);
+        console.log(`[syncSleep] Night data keys: ${Object.keys(night ??  {})}`);
 
-        const night = await fetchJsonOrThrow<any>(
-          nightUrl,
-          {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              Accept: "application/json",
-            },
-          },
-          "Polar night detail fetch"
-        );
-
-        console.log(`[syncSleep] Night data: `, JSON.stringify(night));
-
-        if (! night) {
-          console.log(`[syncSleep] Empty night data`);
+        if (!night?. date) {
+          console.log(`[syncSleep] No date in night data`);
           continue;
         }
 
-        // ✅ Map Polar sleep data to database schema
+        // ✅ Map Polar sleep response fields to database schema
         const sleepRecord = {
           user_id: userId,
-          polar_sleep_id: night?. id,
-          sleep_date: String(night?.["night-time"]?.start ??  "").split("T")[0] || null,
-          bedtime: night?.["night-time"]?.start ?? null,
-          wake_time: night?.["night-time"]?.end ?? null,
-          duration_minutes: Math.round(((night?.duration ?? 0) / 60)),
-          deep_minutes: Math.round((night?.["sleep-stages"]?.deep ?? 0) / 60),
-          light_minutes: Math.round((night?.["sleep-stages"]?.light ?? 0) / 60),
-          rem_minutes: Math.round((night?.["sleep-stages"]?.rem ?? 0) / 60),
-          awake_minutes: Math.round((night?.["sleep-stages"]?.awake ??  0) / 60),
-          sleep_score: night?.["sleep-score"] ?? null,
+          polar_sleep_id: `${night?. date}_${night?.device_id || "unknown"}`, // Unique identifier
+          sleep_date: night?.date || null,
+          bedtime: night?.sleep_start_time || null,
+          wake_time: night?.sleep_end_time || null,
+          duration_minutes: Math.round(((night?.sleep_goal ??  0) / 60)), // Total sleep duration
+          deep_minutes: Math.round(((night?. deep_sleep ?? 0) / 60)), // deep_sleep is in seconds
+          light_minutes: Math.round(((night?.light_sleep ?? 0) / 60)), // light_sleep is in seconds
+          rem_minutes: Math.round(((night?.rem_sleep ?? 0) / 60)), // rem_sleep is in seconds
+          awake_minutes: Math.round(((night?.total_interruption_duration ?? 0) / 60)), // interruptions as awake time
+          sleep_score: night?.sleep_score ??  null,
           raw_data: night,
         };
 
-        console.log(`[syncSleep] Upserting sleep record:`, JSON.stringify(sleepRecord));
+        console.log(`[syncSleep] Upserting sleep record for ${night?.date}`);
 
-        await supabase. from("sleep_sessions").upsert(
+        await supabase.from("sleep_sessions").upsert(
           sleepRecord,
           { onConflict: "user_id,polar_sleep_id" }
         );
@@ -287,30 +251,15 @@ async function syncSleep(
         synced++;
         console.log(`[syncSleep] Successfully upserted night ${synced}`);
       } catch (nightError) {
-        console.error(`[syncSleep] Error processing night: `, nightError);
+        console.error(`[syncSleep] Error processing night:  `, nightError);
         continue;
       }
     }
 
-    console.log(`[syncSleep] Committing transaction at ${resourceUri}`);
-
-    // ✅ Commit the transaction (mark data as synced)
-    await fetchJsonOrThrow<any>(
-      resourceUri,
-      {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      },
-      "Polar sleep transaction commit"
-    );
-
-    console.log(`[syncSleep] Transaction committed`);
+    console.log(`[syncSleep] Sleep sync complete, ${synced} nights synced`);
     return synced;
   } catch (e) {
     console.error("[syncSleep] Fatal error:", e);
-    // Return 0 instead of throwing so exercise sync still completes
     return 0;
   }
 }
@@ -335,7 +284,7 @@ Deno.serve(async (req) => {
     }
 
     if (!bodyUserId) {
-      return jsonResponse({ error: "No user found to sync (missing user_id in body)" }, 400);
+      return jsonResponse({ error:  "No user found to sync (missing user_id in body)" }, 400);
     }
 
     const results:  Array<{ user_id: string; success: boolean; synced?:  number; error?: string }> = [];
@@ -353,7 +302,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    let polarUserId:  number | null = token.polar_user_id ?  Number(token.polar_user_id) : null;
+    let polarUserId: number | null = token.polar_user_id ?  Number(token.polar_user_id) : null;
 
     if (!polarUserId) {
       const { data: profile } = await supabase
@@ -371,7 +320,8 @@ Deno.serve(async (req) => {
           {
             user_id: bodyUserId,
             success: false,
-            error: "Missing polar_user_id on oauth_tokens.  Reconnect Polar so we can register with AccessLink.",
+            error: 
+              "Missing polar_user_id on oauth_tokens.  Reconnect Polar so we can register with AccessLink.",
           },
         ],
       });
@@ -380,7 +330,7 @@ Deno.serve(async (req) => {
     try {
       const accessToken = await refreshTokenIfNeeded(supabase, bodyUserId, token);
 
-      // ✅ SYNC BOTH EXERCISES AND SLEEP
+      // ✅ Sync both exercises and sleep
       const exercisesSynced = await syncExercises(supabase, bodyUserId, polarUserId, accessToken);
       const sleepSynced = await syncSleep(supabase, bodyUserId, polarUserId, accessToken);
 
