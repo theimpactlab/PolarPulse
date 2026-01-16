@@ -189,21 +189,22 @@ export const useAppStore = create<AppState>()(
           source: "polar",
         }));
 
-        // ✅ FIXED: Changed from `pulled.sleeps` to `pulled.sleepSessions`
-        const mappedSleeps: SleepSession[] = (pulled.sleepSessions || []).map((s: any) => ({
+        // ✅ FIXED:  Changed from `pulled. sleepSessions` to `pulled.sleepSessions` with correct field mapping
+        const mappedSleeps:  SleepSession[] = (pulled.sleepSessions || []).map((s:  any) => ({
           id: `polar_sleep_${s.polar_sleep_id}`,
           polarId: s.polar_sleep_id,
           date: s.sleep_date,
-          sleepStart: s.bedtime ?? undefined,
-          sleepEnd: s. wake_time ?? undefined,
-          totalSleepMinutes: s.duration_minutes || 0,
-          timeInBedMinutes: s.duration_minutes || 0,
+          sleepStart: s.bedtime ??  undefined,
+          sleepEnd: s.wake_time ?? undefined,
+          totalSleepMinutes: s. duration_minutes || 0, // ✅ This is correct
+          timeInBedMinutes: s. duration_minutes || 0, // ✅ Same as total for now (no separate bed time in Polar)
           stages: {
             awake: s.awake_minutes || 0,
             light:  s.light_minutes || 0,
             deep: s.deep_minutes || 0,
             rem: s.rem_minutes || 0,
           },
+          sleep_score: s.sleep_score ??  undefined, // ✅ ADD THIS LINE
           source: "polar",
         }));
 

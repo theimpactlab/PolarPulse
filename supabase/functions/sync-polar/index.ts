@@ -232,7 +232,7 @@ async function syncSleep(
           sleep_date: night?.date || null,
           bedtime: night?.sleep_start_time || null,
           wake_time: night?.sleep_end_time || null,
-          duration_minutes: Math.round(((night?.sleep_goal ??  0) / 60)), // Total sleep duration
+          duration_minutes: Math. round(((night?.duration ??  0) / 60)), // Total sleep duration
           deep_minutes: Math.round(((night?. deep_sleep ?? 0) / 60)), // deep_sleep is in seconds
           light_minutes: Math.round(((night?.light_sleep ?? 0) / 60)), // light_sleep is in seconds
           rem_minutes: Math.round(((night?.rem_sleep ?? 0) / 60)), // rem_sleep is in seconds
