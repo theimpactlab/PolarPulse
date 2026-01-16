@@ -132,7 +132,7 @@ export const useAppStore = create<AppState>()(
       // Initial state
       isPolarConnected: false,
       isAppleHealthConnected: false,
-      isAppleHealthAvailable: isHealthAvailable(),
+      isAppleHealthAvailable: false,
       isDemoMode: false,
 
       workouts: [],
