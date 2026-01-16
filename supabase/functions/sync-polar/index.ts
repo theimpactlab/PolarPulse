@@ -283,7 +283,7 @@ async function syncSleep(
   }
 }
 
-// ✅ NEW:  Sync Nightly Recharge (Recovery metrics - HRV, RHR)
+// ✅ FIXED: Sync Nightly Recharge (Recovery metrics - HRV, RHR)
 async function syncNightlyRecharge(
   supabase: any,
   userId: string,
@@ -306,51 +306,57 @@ async function syncNightlyRecharge(
       "Polar nightly recharge fetch"
     );
 
-    console.log(`[syncNightlyRecharge] Response keys: ${Object.keys(rechargeResponse ??  {})}`);
+    console.log(`[syncNightlyRecharge] Response:  ${JSON.stringify(rechargeResponse)}`);
 
-    if (!rechargeResponse) {
-      console.log(`[syncNightlyRecharge] Empty response`);
+    if (!rechargeResponse || !rechargeResponse.recharges) {
+      console.log(`[syncNightlyRecharge] No recharges in response`);
       return 0;
     }
 
-    const rechargeList:  any[] = rechargeResponse?. recharges ??  [];
-    console.log(`[syncNightlyRecharge] Found ${rechargeList. length} recharge records`);
+    const rechargeList:  any[] = rechargeResponse. recharges;
+    console. log(`[syncNightlyRecharge] Found ${rechargeList.length} recharge records`);
 
     let synced = 0;
 
     for (const recharge of rechargeList) {
       try {
-        console.log(`[syncNightlyRecharge] Processing recharge for date:  ${recharge?. date}`);
+        const date = recharge?. date;
+        console.log(`[syncNightlyRecharge] Processing recharge for date: ${date}`);
 
-        if (! recharge?.date) {
-          console.log(`[syncNightlyRecharge] No date in recharge data`);
+        if (!date) {
+          console.log(`[syncNightlyRecharge] No date in recharge data, skipping`);
           continue;
         }
 
         // ✅ Map Nightly Recharge data to daily_metrics
         const dailyMetric = {
-          user_id: userId,
-          metric_date: recharge?. date,
-          // Heart Rate Variability (HRV) - higher is better for recovery
-          hrv: recharge?.heart_rate_variability_avg ?? null,
-          // Resting Heart Rate - lower is better
-          resting_hr: recharge?.heart_rate_avg ?? null,
+          user_id:  userId,
+          metric_date:  date,
+          // Heart Rate Variability (HRV) - from heart_rate_variability_avg
+          hrv:  recharge. heart_rate_variability_avg ??  null,
+          // Resting Heart Rate - from heart_rate_avg
+          resting_hr: Math.round(recharge.heart_rate_avg ?? 0) ||  null,
           // Nightly Recharge status (0-4 scale)
-          nightly_recharge_status: recharge?.nightly_recharge_status ?? null,
-          // ANS charge (0-1 scale)
-          ans_charge: recharge?.ans_charge ??  null,
+          nightly_recharge_status: recharge.nightly_recharge_status ?? null,
+          // ANS charge
+          ans_charge: recharge. ans_charge ?? null,
           // Breathing rate average
-          breathing_rate_avg: recharge?.breathing_rate_avg ?? null,
-          // Raw data
+          breathing_rate_avg: recharge.breathing_rate_avg ?? null,
+          // Store raw data for debugging
           raw_data: recharge,
+          updated_at: new Date().toISOString(),
         };
 
-        console.log(`[syncNightlyRecharge] Upserting daily metric for ${recharge?.date}`);
+        console.log(`[syncNightlyRecharge] Upserting metric:  ${JSON.stringify(dailyMetric)}`);
 
-        await supabase. from("daily_metrics").upsert(
-          dailyMetric,
-          { onConflict: "user_id,metric_date" }
-        );
+        const { error } = await supabase
+          .from("daily_metrics")
+          .upsert(dailyMetric, { onConflict: "user_id,metric_date" });
+
+        if (error) {
+          console. error(`[syncNightlyRecharge] Upsert error: ${error.message}`);
+          continue;
+        }
 
         synced++;
         console.log(`[syncNightlyRecharge] Successfully upserted metric ${synced}`);
