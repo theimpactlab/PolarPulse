@@ -164,7 +164,7 @@ export const useAppStore = create<AppState>()(
       },
 
       // ✅ FIXED: sync, then pull data from Supabase into Zustand so UI updates
-      syncData: async () => {
+      syncData:  async () => {
         const result = await polarOAuthService.syncPolarData();
         if (!result.success) return result;
 
@@ -182,61 +182,54 @@ export const useAppStore = create<AppState>()(
           date: w.workout_date,
           type: w.workout_type || "workout",
           durationMinutes: w.duration_minutes || 0,
-          calories: w. calories || 0,
+          calories: w.calories || 0,
           avgHR: w.avg_hr || 0,
           maxHR: w.max_hr || 0,
-          strainScore: w.strain_score ?? undefined,
+          strainScore: w.strain_score ??  undefined,
           source: "polar",
         }));
 
-        // ✅ FIXED:  Changed from `pulled. sleepSessions` to `pulled.sleepSessions` with correct field mapping
-        const mappedSleeps:  SleepSession[] = (pulled.sleepSessions || []).map((s:  any) => ({
+        // ✅ Map sleep sessions
+        const mappedSleeps: SleepSession[] = (pulled. sleepSessions || []).map((s: any) => ({
           id: `polar_sleep_${s.polar_sleep_id}`,
           polarId: s.polar_sleep_id,
           date: s.sleep_date,
           sleepStart: s.bedtime ??  undefined,
-          sleepEnd: s.wake_time ?? undefined,
-          totalSleepMinutes: s. duration_minutes || 0, // ✅ This is correct
-          timeInBedMinutes: s. duration_minutes || 0, // ✅ Same as total for now (no separate bed time in Polar)
+          sleepEnd:  s.wake_time ?? undefined,
+          totalSleepMinutes: s.duration_minutes || 0,
+          timeInBedMinutes: s.duration_minutes || 0,
           stages: {
             awake: s.awake_minutes || 0,
-            light:  s.light_minutes || 0,
-            deep: s.deep_minutes || 0,
+            light: s.light_minutes || 0,
+            deep: s. deep_minutes || 0,
             rem: s.rem_minutes || 0,
           },
-          sleep_score: s.sleep_score ??  undefined, // ✅ ADD THIS LINE
+          sleep_score: s.sleep_score ??  undefined,
           source: "polar",
+        }));
+
+        // ✅ Map recovery metrics from daily_metrics
+        const mappedDailyMetrics:  DailyMetrics[] = (pulled.dailyMetrics || []).map((m: any) => ({
+          date: m.metric_date,
+          recoveryScore: m.recovery_score ??  undefined,
+          strainScore:  m.strain_score ?? undefined,
+          sleepScore: m.sleep_score ?? undefined,
+          bodyBattery: m.body_battery ??  undefined,
+          trainingLoad: m.training_load ?? undefined,
+          hrv: m.hrv ?? undefined,
+          rhr: m. resting_hr ?? undefined,
         }));
 
         set({
           workouts: mappedWorkouts,
           sleepSessions: mappedSleeps,
-          lastSyncDate:  new Date().toISOString(),
+          dailyMetrics: mappedDailyMetrics,
+          lastSyncDate: new Date().toISOString(),
           isDemoMode: false,
         });
 
-        return { success: true, synced: result.synced ?? 0 };
+        return { success: true, synced: result.synced ??  0 };
       },
-
-      // ✅ Map recovery metrics from daily_metrics
-      const mappedDailyMetrics:  DailyMetrics[] = (pulled. dailyMetrics || []).map((m: any) => ({
-        date: m.metric_date,
-        recoveryScore: m.recovery_score ??  undefined,
-        strainScore: m.strain_score ??  undefined,
-        sleepScore: m.sleep_score ?? undefined,
-        bodyBattery: m.body_battery ?? undefined,
-        trainingLoad: m.training_load ?? undefined,
-        hrv: m.hrv ?? undefined,
-        rhr: m. resting_hr ?? undefined,
-      }));
-
-      set({
-        workouts: mappedWorkouts,
-        sleepSessions: mappedSleeps,
-        dailyMetrics: mappedDailyMetrics,
-        lastSyncDate: new Date().toISOString(),
-        isDemoMode: false,
-      });
 
       // Apple Health actions
       checkAppleHealthAvailability: () => {
