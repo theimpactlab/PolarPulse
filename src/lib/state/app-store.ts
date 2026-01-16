@@ -218,6 +218,26 @@ export const useAppStore = create<AppState>()(
         return { success: true, synced: result.synced ?? 0 };
       },
 
+      // ✅ Map recovery metrics from daily_metrics
+      const mappedDailyMetrics:  DailyMetrics[] = (pulled. dailyMetrics || []).map((m: any) => ({
+        date: m.metric_date,
+        recoveryScore: m.recovery_score ??  undefined,
+        strainScore: m.strain_score ??  undefined,
+        sleepScore: m.sleep_score ?? undefined,
+        bodyBattery: m.body_battery ?? undefined,
+        trainingLoad: m.training_load ?? undefined,
+        hrv: m.hrv ?? undefined,
+        rhr: m. resting_hr ?? undefined,
+      }));
+
+      set({
+        workouts: mappedWorkouts,
+        sleepSessions: mappedSleeps,
+        dailyMetrics: mappedDailyMetrics,
+        lastSyncDate: new Date().toISOString(),
+        isDemoMode: false,
+      });
+
       // Apple Health actions
       checkAppleHealthAvailability: () => {
         set({ isAppleHealthAvailable:  isHealthAvailable() });

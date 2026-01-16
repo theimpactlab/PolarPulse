@@ -283,6 +283,91 @@ async function syncSleep(
   }
 }
 
+// ✅ NEW:  Sync Nightly Recharge (Recovery metrics - HRV, RHR)
+async function syncNightlyRecharge(
+  supabase: any,
+  userId: string,
+  accessToken: string
+): Promise<number> {
+  try {
+    console.log(`[syncNightlyRecharge] Starting nightly recharge sync for user ${userId}`);
+
+    const rechargeUrl = "https://www.polaraccesslink.com/v3/users/nightly-recharge";
+    console.log(`[syncNightlyRecharge] Fetching from ${rechargeUrl}`);
+
+    const rechargeResponse = await fetchJsonOrThrow<any>(
+      rechargeUrl,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
+      },
+      "Polar nightly recharge fetch"
+    );
+
+    console.log(`[syncNightlyRecharge] Response keys: ${Object.keys(rechargeResponse ??  {})}`);
+
+    if (!rechargeResponse) {
+      console.log(`[syncNightlyRecharge] Empty response`);
+      return 0;
+    }
+
+    const rechargeList:  any[] = rechargeResponse?. recharges ??  [];
+    console.log(`[syncNightlyRecharge] Found ${rechargeList. length} recharge records`);
+
+    let synced = 0;
+
+    for (const recharge of rechargeList) {
+      try {
+        console.log(`[syncNightlyRecharge] Processing recharge for date:  ${recharge?. date}`);
+
+        if (! recharge?.date) {
+          console.log(`[syncNightlyRecharge] No date in recharge data`);
+          continue;
+        }
+
+        // ✅ Map Nightly Recharge data to daily_metrics
+        const dailyMetric = {
+          user_id: userId,
+          metric_date: recharge?. date,
+          // Heart Rate Variability (HRV) - higher is better for recovery
+          hrv: recharge?.heart_rate_variability_avg ?? null,
+          // Resting Heart Rate - lower is better
+          resting_hr: recharge?.heart_rate_avg ?? null,
+          // Nightly Recharge status (0-4 scale)
+          nightly_recharge_status: recharge?.nightly_recharge_status ?? null,
+          // ANS charge (0-1 scale)
+          ans_charge: recharge?.ans_charge ??  null,
+          // Breathing rate average
+          breathing_rate_avg: recharge?.breathing_rate_avg ?? null,
+          // Raw data
+          raw_data: recharge,
+        };
+
+        console.log(`[syncNightlyRecharge] Upserting daily metric for ${recharge?.date}`);
+
+        await supabase. from("daily_metrics").upsert(
+          dailyMetric,
+          { onConflict: "user_id,metric_date" }
+        );
+
+        synced++;
+        console.log(`[syncNightlyRecharge] Successfully upserted metric ${synced}`);
+      } catch (rechargeError) {
+        console.error(`[syncNightlyRecharge] Error processing recharge:  `, rechargeError);
+        continue;
+      }
+    }
+
+    console.log(`[syncNightlyRecharge] Sync complete, ${synced} metrics synced`);
+    return synced;
+  } catch (e) {
+    console.error("[syncNightlyRecharge] Fatal error:", e);
+    return 0;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -349,11 +434,12 @@ Deno.serve(async (req) => {
     try {
       const accessToken = await refreshTokenIfNeeded(supabase, bodyUserId, token);
 
-      // ✅ Sync both exercises and sleep
+      // ✅ SYNC EXERCISES, SLEEP, AND NIGHTLY RECHARGE
       const exercisesSynced = await syncExercises(supabase, bodyUserId, polarUserId, accessToken);
       const sleepSynced = await syncSleep(supabase, bodyUserId, polarUserId, accessToken);
+      const rechargeSync = await syncNightlyRecharge(supabase, bodyUserId, accessToken);
 
-      results.push({ user_id: bodyUserId, success: true, synced: exercisesSynced + sleepSynced });
+      results.push({ user_id: bodyUserId, success: true, synced: exercisesSynced + sleepSynced + rechargeSync });
     } catch (e) {
       results.push({
         user_id: bodyUserId,

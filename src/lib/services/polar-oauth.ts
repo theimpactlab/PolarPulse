@@ -20,7 +20,8 @@ function getUserIdOrNull(): string | null {
 async function pullLatestFromSupabaseImpl(): Promise<{
   success: boolean;
   workouts?:  any[];
-  sleepSessions?: any[];
+  sleepSessions?:  any[];
+  dailyMetrics?: any[];
   error?: string;
 }> {
   try {
@@ -35,12 +36,12 @@ async function pullLatestFromSupabaseImpl(): Promise<{
       .limit(500)
       .execute<any[]>();
 
-    if (workoutsRes. error) {
-      return { success: false, error: workoutsRes.error.message || 'Failed to load workouts' };
+    if (workoutsRes.error) {
+      return { success: false, error: workoutsRes. error.message || 'Failed to load workouts' };
     }
 
     const sleepRes = await supabase
-      . from('sleep_sessions')
+      .from('sleep_sessions')
       .select('*')
       .eq('user_id', userId)
       .order('sleep_date', { ascending: false })
@@ -48,16 +49,30 @@ async function pullLatestFromSupabaseImpl(): Promise<{
       .execute<any[]>();
 
     if (sleepRes.error) {
-      return { success: false, error: sleepRes.error. message || 'Failed to load sleep sessions' };
+      return { success:  false, error: sleepRes. error.message || 'Failed to load sleep sessions' };
+    }
+
+    // ✅ NEW: Fetch daily metrics (recovery data)
+    const metricsRes = await supabase
+      .from('daily_metrics')
+      .select('*')
+      .eq('user_id', userId)
+      .order('metric_date', { ascending: false })
+      .limit(500)
+      .execute<any[]>();
+
+    if (metricsRes.error) {
+      return { success: false, error: metricsRes.error.message || 'Failed to load daily metrics' };
     }
 
     return {
       success: true,
-      workouts: workoutsRes. data ??  [],
+      workouts: workoutsRes.data ??  [],
       sleepSessions:  sleepRes.data ?? [],
+      dailyMetrics: metricsRes.data ?? [],
     };
   } catch (e) {
-    return { success:  false, error: e instanceof Error ?  e.message : 'Failed to load data.' };
+    return { success:  false, error: e instanceof Error ? e.message : 'Failed to load data.' };
   }
 }
 
