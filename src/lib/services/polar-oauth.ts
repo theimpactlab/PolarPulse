@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import { supabase } from '@/lib/supabase/client';
 
 type Result = { success: boolean; error?: string };
-type SyncResult = { success: boolean; synced?:  number; error?: string };
+type SyncResult = { success: boolean; synced? :  number; error?: string };
 
 const APP_WEB_URL = process.env. EXPO_PUBLIC_APP_URL || '';
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
@@ -14,13 +14,13 @@ function getCallbackUrl(): string {
 
 function getUserIdOrNull(): string | null {
   const session = supabase.auth.getSession?. () ??  null;
-  return session?.user?.id ?? supabase.auth.getUser?.()?.id ??  null;
+  return session?.user?.id ??  supabase.auth.getUser?.()?.id ??  null;
 }
 
 async function pullLatestFromSupabaseImpl(): Promise<{
   success: boolean;
-  workouts?:  any[];
-  sleepSessions?: any[];
+  workouts? :  any[];
+  sleepSessions?:  any[];
   dailyMetrics?: any[];
   error?: string;
 }> {
@@ -28,8 +28,10 @@ async function pullLatestFromSupabaseImpl(): Promise<{
     const userId = getUserIdOrNull();
     if (!userId) return { success: false, error: 'Please sign in first.' };
 
+    console.log('[pullLatestFromSupabase] User ID:', userId);
+
     const workoutsRes = await supabase
-      .from('workouts')
+      . from('workouts')
       .select('*')
       .eq('user_id', userId)
       .order('workout_date', { ascending: false })
@@ -37,8 +39,11 @@ async function pullLatestFromSupabaseImpl(): Promise<{
       .execute<any[]>();
 
     if (workoutsRes.error) {
+      console.error('[pullLatestFromSupabase] Workouts error:', workoutsRes.error);
       return { success: false, error: workoutsRes.error.message || 'Failed to load workouts' };
     }
+
+    console.log('[pullLatestFromSupabase] Loaded workouts:', workoutsRes.data?. length ??  0);
 
     const sleepRes = await supabase
       . from('sleep_sessions')
@@ -49,10 +54,15 @@ async function pullLatestFromSupabaseImpl(): Promise<{
       .execute<any[]>();
 
     if (sleepRes.error) {
-      return { success: false, error: sleepRes.error. message || 'Failed to load sleep sessions' };
+      console.error('[pullLatestFromSupabase] Sleep error:', sleepRes.error);
+      return { success: false, error: sleepRes.error.message || 'Failed to load sleep sessions' };
     }
 
+    console.log('[pullLatestFromSupabase] Loaded sleep sessions:', sleepRes.data?.length ??  0);
+
     // ✅ Fetch daily metrics (recovery data)
+    console.log('[pullLatestFromSupabase] Fetching daily metrics for user:', userId);
+    
     const metricsRes = await supabase
       .from('daily_metrics')
       .select('*')
@@ -62,19 +72,23 @@ async function pullLatestFromSupabaseImpl(): Promise<{
       .execute<any[]>();
 
     if (metricsRes.error) {
-      console.error('Metrics fetch error:', metricsRes.error);
+      console.error('[pullLatestFromSupabase] Metrics error:', JSON.stringify(metricsRes. error));
       return { success: false, error: metricsRes.error.message || 'Failed to load daily metrics' };
     }
 
-    console.log(`[pullLatestFromSupabase] Loaded ${metricsRes.data?. length ??  0} daily metrics`);
+    console.log('[pullLatestFromSupabase] Loaded daily metrics:', metricsRes.data?.length ??  0);
+    if (metricsRes.data && metricsRes.data.length > 0) {
+      console.log('[pullLatestFromSupabase] First metric:', JSON.stringify(metricsRes. data[0]));
+    }
 
     return {
       success: true,
-      workouts: workoutsRes.data ??  [],
-      sleepSessions:  sleepRes.data ?? [],
-      dailyMetrics: metricsRes.data ?? [],
+      workouts: workoutsRes. data ??  [],
+      sleepSessions: sleepRes.data ??  [],
+      dailyMetrics:  metricsRes.data ??   [],
     };
   } catch (e) {
+    console.error('[pullLatestFromSupabase] Exception:', e);
     return { success: false, error: e instanceof Error ? e.message : 'Failed to load data.' };
   }
 }
@@ -88,7 +102,6 @@ export const polarOAuthService = {
 
       const redirectUrl = getCallbackUrl();
 
-      // Use the deployed edge function name you actually have:  polar-auth
       const authorizeUrl =
         `${SUPABASE_URL}/functions/v1/polar-auth? user_id=${encodeURIComponent(userId)}` +
         `&redirect_url=${encodeURIComponent(redirectUrl)}`;
@@ -100,7 +113,7 @@ export const polarOAuthService = {
 
       return { success: false, error: 'Native connect not configured in this build.' };
     } catch (e) {
-      return { success:  false, error: e instanceof Error ?  e.message : 'Failed to start OAuth.' };
+      return { success: false, error: e instanceof Error ? e.message : 'Failed to start OAuth.' };
     }
   },
 
@@ -122,7 +135,7 @@ export const polarOAuthService = {
       if (!userId) return { success: false, error: 'Please sign in before syncing.' };
 
       const { data, error } = await supabase. functions.invoke<{
-        results: Array<{ user_id: string; success:  boolean; synced?: number; error?: string }>;
+        results: Array<{ user_id: string; success: boolean; synced?:  number; error?: string }>;
       }>('sync-polar', { body: { user_id: userId } });
 
       if (error) return { success: false, error:  error.message };
@@ -137,11 +150,11 @@ export const polarOAuthService = {
     }
   },
 
-  // IMPORTANT: this is the function your app-store is calling
   async pullLatestFromSupabase(): Promise<{
     success: boolean;
     workouts?: any[];
     sleepSessions?: any[];
+    dailyMetrics?: any[];
     error?: string;
   }> {
     return pullLatestFromSupabaseImpl();
@@ -153,13 +166,13 @@ export const polarOAuthService = {
       if (!userId) return { success: false, error: 'Please sign in first.' };
 
       const del = await supabase
-        . from('oauth_tokens')
+        .from('oauth_tokens')
         .delete()
         .eq('user_id', userId)
         .eq('provider', 'polar')
         .execute<any>();
 
-      if (del.error) return { success: false, error: del.error.message || 'Failed to delete oauth token' };
+      if (del.error) return { success: false, error:  del.error.message || 'Failed to delete oauth token' };
 
       await supabase
         .from('profiles')
@@ -169,11 +182,10 @@ export const polarOAuthService = {
 
       return { success:  true };
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e. message : 'Disconnect failed.' };
+      return { success:  false, error: e instanceof Error ?  e.message : 'Disconnect failed.' };
     }
   },
 
-  // ✅ NEW: Check Polar connection status from backend
   async checkPolarConnection(): Promise<boolean> {
     try {
       const userId = getUserIdOrNull();
@@ -194,5 +206,5 @@ export const polarOAuthService = {
   },
 };
 
-// TEMP: uncomment to verify bundle includes this function
+// TEMP:  uncomment to verify bundle includes this function
 console.log('[polarOAuthService keys]', Object.keys(polarOAuthService));
