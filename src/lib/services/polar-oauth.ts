@@ -36,7 +36,10 @@ async function pullLatestFromSupabaseImpl(): Promise<{
       .execute<any[]>();
 
     if (workoutsRes.error) {
-      return { success: false, error: workoutsRes.error.message || 'Failed to load workouts' };
+      return {
+        success: false,
+        error: workoutsRes.error.message || 'Failed to load workouts',
+      };
     }
 
     const sleepRes = await supabase
@@ -48,7 +51,10 @@ async function pullLatestFromSupabaseImpl(): Promise<{
       .execute<any[]>();
 
     if (sleepRes.error) {
-      return { success: false, error: sleepRes.error.message || 'Failed to load sleep sessions' };
+      return {
+        success: false,
+        error: sleepRes.error.message || 'Failed to load sleep sessions',
+      };
     }
 
     return {
@@ -57,21 +63,26 @@ async function pullLatestFromSupabaseImpl(): Promise<{
       sleepSessions: sleepRes.data ?? [],
     };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : 'Failed to load data.' };
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : 'Failed to load data.',
+    };
   }
 }
-
 
 export const polarOAuthService = {
   async startOAuthFlow(): Promise<Result> {
     try {
       const userId = getUserIdOrNull();
-      if (!userId) return { success: false, error: 'Please sign in before connecting Polar.' };
-      if (!SUPABASE_URL) return { success: false, error: 'Missing EXPO_PUBLIC_SUPABASE_URL' };
+      if (!userId) {
+        return { success: false, error: 'Please sign in before connecting Polar.' };
+      }
+      if (!SUPABASE_URL) {
+        return { success: false, error: 'Missing EXPO_PUBLIC_SUPABASE_URL' };
+      }
 
       const redirectUrl = getCallbackUrl();
 
-      // Use the deployed edge function name you actually have: polar-auth
       const authorizeUrl =
         `${SUPABASE_URL}/functions/v1/polar-auth?user_id=${encodeURIComponent(userId)}` +
         `&redirect_url=${encodeURIComponent(redirectUrl)}`;
@@ -81,17 +92,25 @@ export const polarOAuthService = {
         return { success: true };
       }
 
-      return { success: false, error: 'Native connect not configured in this build.' };
+      return {
+        success: false,
+        error: 'Native connect not configured in this build.',
+      };
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : 'Failed to start OAuth.' };
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : 'Failed to start OAuth.',
+      };
     }
   },
 
   handleWebCallback(urlParams: URLSearchParams): { success: boolean; error?: string } {
     const error = urlParams.get('error');
     if (error) return { success: false, error };
+
     const polar = urlParams.get('polar');
     if (polar === 'connected') return { success: true };
+
     return { success: false, error: 'Missing success parameter.' };
   },
 
@@ -102,25 +121,36 @@ export const polarOAuthService = {
   async syncPolarData(): Promise<SyncResult> {
     try {
       const userId = getUserIdOrNull();
-      if (!userId) return { success: false, error: 'Please sign in before syncing.' };
+      if (!userId) {
+        return { success: false, error: 'Please sign in before syncing.' };
+      }
 
       const { data, error } = await supabase.functions.invoke<{
-        results: Array<{ user_id: string; success: boolean; synced?: number; error?: string }>;
+        results: Array<{
+          user_id: string;
+          success: boolean;
+          synced?: number;
+          error?: string;
+        }>;
       }>('sync-polar', { body: { user_id: userId } });
 
       if (error) return { success: false, error: error.message };
 
       const first = data?.results?.[0];
       if (!first) return { success: false, error: 'No sync result returned.' };
-      if (!first.success) return { success: false, error: first.error || 'Sync failed.' };
+      if (!first.success) {
+        return { success: false, error: first.error || 'Sync failed.' };
+      }
 
       return { success: true, synced: first.synced ?? 0 };
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : 'Sync failed.' };
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : 'Sync failed.',
+      };
     }
   },
 
-  // IMPORTANT: this is the function your app-store is calling
   async pullLatestFromSupabase(): Promise<{
     success: boolean;
     workouts?: any[];
@@ -142,7 +172,12 @@ export const polarOAuthService = {
         .eq('provider', 'polar')
         .execute<any>();
 
-      if (del.error) return { success: false, error: del.error.message || 'Failed to delete oauth token' };
+      if (del.error) {
+        return {
+          success: false,
+          error: del.error.message || 'Failed to delete oauth token',
+        };
+      }
 
       await supabase
         .from('profiles')
@@ -152,9 +187,12 @@ export const polarOAuthService = {
 
       return { success: true };
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : 'Disconnect failed.' };
+      return {
+        success: false,
+        error: e instanceof Error ? e.message : 'Disconnect failed.',
+      };
     }
-    // Add this function to polarOAuthService object (before the closing brace on line 157)
+  },
 
   async checkPolarConnection(): Promise<boolean> {
     try {
@@ -168,7 +206,7 @@ export const polarOAuthService = {
         .single();
 
       if (!data) return false;
-      return ! !(data.polar_user_id && data.polar_connected_at);
+      return !!(data.polar_user_id && data.polar_connected_at);
     } catch (e) {
       console.error('Failed to check Polar connection:', e);
       return false;
