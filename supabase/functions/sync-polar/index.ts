@@ -177,9 +177,9 @@ async function syncExercises(
   return synced;
 }
 
-// ✅ FIXED: Sleep sync with comprehensive logging
+// ✅ CORRECTED: Use transaction-based sleep endpoint (like exercises)
 async function syncSleep(
-  supabase:  any,
+  supabase: any,
   userId: string,
   polarUserId: number,
   accessToken: string
@@ -187,41 +187,55 @@ async function syncSleep(
   try {
     console.log(`[syncSleep] Starting sleep sync for user ${userId}, polarUserId: ${polarUserId}`);
 
-    // ✅ Try the /nights endpoint first (direct list)
-    const nightsUrl = `https://www.polaraccesslink.com/v3/users/${polarUserId}/nights`;
-    console.log(`[syncSleep] Fetching from ${nightsUrl}`);
+    // ✅ Create a sleep transaction (same pattern as exercises)
+    const txUrl = `https://www.polaraccesslink.com/v3/users/${polarUserId}/sleep-transactions`;
+    console.log(`[syncSleep] Creating transaction at ${txUrl}`);
 
-    const sleepResponse = await fetchJsonOrThrow<any>(
-      nightsUrl,
+    const tx = await fetchJsonOrThrow<any>(
+      txUrl,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
+      },
+      "Polar sleep transaction create"
+    );
+
+    console.log(`[syncSleep] Transaction response: `, JSON.stringify(tx));
+
+    if (!tx) {
+      console.log(`[syncSleep] No transaction response`);
+      return 0;
+    }
+
+    // ✅ Get the resource URI from transaction response
+    const resourceUri = tx?. ["resource-uri"];
+    if (!resourceUri || typeof resourceUri !== "string") {
+      console.log(`[syncSleep] Missing resource-uri in transaction`);
+      return 0;
+    }
+
+    console.log(`[syncSleep] Resource URI: ${resourceUri}`);
+
+    // ✅ Fetch the sleep data list
+    const sleepData = await fetchJsonOrThrow<any>(
+      resourceUri,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/json",
         },
       },
-      "Polar nights fetch"
+      "Polar sleep transaction list"
     );
 
-    console.log(`[syncSleep] Sleep response: `, JSON.stringify(sleepResponse));
+    console.log(`[syncSleep] Sleep data response:`, JSON.stringify(sleepData));
 
-    if (!sleepResponse) {
-      console.log(`[syncSleep] Empty response from /nights`);
-      return 0;
-    }
-
-    // ✅ Response can be either { nights: [...] } or directly an array of URLs
-    let nightsList: string[] = [];
-
-    if (Array.isArray(sleepResponse)) {
-      nightsList = sleepResponse;
-      console.log(`[syncSleep] Response is array, ${nightsList.length} nights`);
-    } else if (sleepResponse?.nights) {
-      nightsList = sleepResponse.nights;
-      console.log(`[syncSleep] Response has nights property, ${nightsList.length} nights`);
-    } else {
-      console.log(`[syncSleep] Unexpected response structure: `, Object.keys(sleepResponse));
-      return 0;
-    }
+    // ✅ The response should have a 'sleep' array containing URLs to individual nights
+    const nightsList:  string[] = sleepData?.sleep ??  [];
+    console.log(`[syncSleep] Found ${nightsList.length} nights`);
 
     let synced = 0;
 
@@ -231,37 +245,42 @@ async function syncSleep(
 
         const night = await fetchJsonOrThrow<any>(
           nightUrl,
-          { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: "application/json",
+            },
+          },
           "Polar night detail fetch"
         );
 
-        console.log(`[syncSleep] Night data:`, JSON.stringify(night));
+        console.log(`[syncSleep] Night data: `, JSON.stringify(night));
 
-        if (!night) {
-          console. log(`[syncSleep] Empty night data`);
+        if (! night) {
+          console.log(`[syncSleep] Empty night data`);
           continue;
         }
 
-        // ✅ Correct data mapping from Polar API
-        const sleepData = {
+        // ✅ Map Polar sleep data to database schema
+        const sleepRecord = {
           user_id: userId,
           polar_sleep_id: night?. id,
-          sleep_date:  String(night?.["night-time"]?.start ?? "").split("T")[0] || null,
+          sleep_date: String(night?.["night-time"]?.start ??  "").split("T")[0] || null,
           bedtime: night?.["night-time"]?.start ?? null,
           wake_time: night?.["night-time"]?.end ?? null,
-          duration_minutes: Math.round(((night?.duration ??  0) / 60)),
+          duration_minutes: Math.round(((night?.duration ?? 0) / 60)),
           deep_minutes: Math.round((night?.["sleep-stages"]?.deep ?? 0) / 60),
           light_minutes: Math.round((night?.["sleep-stages"]?.light ?? 0) / 60),
-          rem_minutes: Math.round((night?.["sleep-stages"]?. rem ?? 0) / 60),
-          awake_minutes: Math.round((night?.["sleep-stages"]?. awake ?? 0) / 60),
+          rem_minutes: Math.round((night?.["sleep-stages"]?.rem ?? 0) / 60),
+          awake_minutes: Math.round((night?.["sleep-stages"]?.awake ??  0) / 60),
           sleep_score: night?.["sleep-score"] ?? null,
           raw_data: night,
         };
 
-        console.log(`[syncSleep] Upserting sleep data: `, JSON.stringify(sleepData));
+        console.log(`[syncSleep] Upserting sleep record:`, JSON.stringify(sleepRecord));
 
-        await supabase.from("sleep_sessions").upsert(
-          sleepData,
+        await supabase. from("sleep_sessions").upsert(
+          sleepRecord,
           { onConflict: "user_id,polar_sleep_id" }
         );
 
@@ -273,10 +292,25 @@ async function syncSleep(
       }
     }
 
-    console.log(`[syncSleep] Sync complete, ${synced} nights synced`);
+    console.log(`[syncSleep] Committing transaction at ${resourceUri}`);
+
+    // ✅ Commit the transaction (mark data as synced)
+    await fetchJsonOrThrow<any>(
+      resourceUri,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+      "Polar sleep transaction commit"
+    );
+
+    console.log(`[syncSleep] Transaction committed`);
     return synced;
   } catch (e) {
     console.error("[syncSleep] Fatal error:", e);
+    // Return 0 instead of throwing so exercise sync still completes
     return 0;
   }
 }
