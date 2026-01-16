@@ -1,279 +1,338 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Moon, Clock, Bed, Zap, TrendingUp, TrendingDown, AlertCircle } from 'lucide-react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { Moon, Clock, Bed, Sun, ChevronRight } from 'lucide-react-native';
 import { useAppStore, type SleepSession, type DailyMetrics, type UserSettings } from '@/lib/state/app-store';
 import { TrendChart } from '@/components/TrendChart';
 import { ScoreRing } from '@/components/ScoreRing';
 import { SleepDebtCard } from '@/components/SleepDebtCard';
-import { formatTime, formatDuration, formatDate } from '@/lib/utils/format';
+import { formatTime, formatDuration, formatDate, getDayOfWeek } from '@/lib/utils/format';
+import { getSleepStatus, getSleepColor } from '@/lib/utils/scoring';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 type TimeRange = '7d' | '30d' | '90d';
 
 export default function SleepScreen() {
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
 
-  const sleepSessions = useAppStore((s) => s.sleepSessions);
-  const userSettings = useAppStore((s) => s.userSettings);
+  const sleepSessions = useAppStore((s): SleepSession[] => s. sleepSessions);
+  const dailyMetrics = useAppStore((s): DailyMetrics[] => s.dailyMetrics);
+  const userSettings = useAppStore((s): UserSettings => s.userSettings);
 
   // Get last night's sleep
   const today = new Date().toISOString().split('T')[0];
   const lastNight = sleepSessions
-    .filter((s) => s.date <= today)
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+    .filter((s: SleepSession) => s.date <= today)
+    .sort((a:  SleepSession, b: SleepSession) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
 
-  const sleepNeedMinutes = (userSettings?.sleepGoalHours ?? 8) * 60;
+  const todayMetrics = dailyMetrics.find((m: DailyMetrics) => m.date === today);
+  const sleepScore = todayMetrics?.sleepScore ??  (lastNight?.sleep_score ?  Math.round(lastNight.sleep_score) : 0);
+
+  // Sleep need (default 8 hours)
+  const sleepNeedMinutes = (userSettings?.sleepGoalHours ??  8) * 60;
   const actualSleepMinutes = lastNight?.totalSleepMinutes ?? 0;
   const sleepDebt = Math.max(0, sleepNeedMinutes - actualSleepMinutes);
-  const sleepScore = lastNight ?  Math.round((actualSleepMinutes / sleepNeedMinutes) * 100) : 0;
 
-  // Calculate metrics
-  const getTrendData = (range: TimeRange) => {
+  // Get trend data
+  const getTrendData = (range: TimeRange, metric: 'duration' | 'score' | 'consistency') => {
     const days = range === '7d' ? 7 : range === '30d' ? 30 : 90;
     const now = new Date();
     return Array.from({ length: days }, (_, i) => {
       const date = new Date(now.getTime() - (days - 1 - i) * 24 * 60 * 60 * 1000);
       const dateStr = date.toISOString().split('T')[0];
-      const session = sleepSessions.find((s) => s.date === dateStr);
-      return {
-        date: dateStr,
-        value: session ?  session.totalSleepMinutes / 60 : 0,
-      };
+      const session = sleepSessions.find((s:  SleepSession) => s.date === dateStr);
+      const metrics = dailyMetrics.find((m: DailyMetrics) => m.date === dateStr);
+
+      let value = 0;
+      if (metric === 'duration') {
+        value = session?.totalSleepMinutes ?  session.totalSleepMinutes / 60 : 0;
+      } else if (metric === 'score') {
+        value = metrics?.sleepScore || 0;
+      } else {
+        value = metrics?.sleepConsistency || 0;
+      }
+      return { date:  dateStr, value };
     });
   };
 
-  const trendData = getTrendData(timeRange);
+  // Calculate weekly average
+  const weeklyAvg = React.useMemo(() => {
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const thisWeek = sleepSessions.filter((s: SleepSession) => new Date(s.date) >= weekAgo);
+    if (thisWeek.length === 0) return 0;
+    const totalMinutes = thisWeek.reduce((sum: number, s: SleepSession) => sum + s.totalSleepMinutes, 0);
+    return totalMinutes / thisWeek.length;
+  }, [sleepSessions]);
 
-  // Calculate averages
-  const getDays = () => timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
-  const avgSleep = sleepSessions
-    .slice(-getDays())
-    .reduce((sum, s) => sum + s.totalSleepMinutes, 0) / Math.max(1, Math.min(getDays(), sleepSessions.length));
-
-  const avgScore = lastNight ? Math.round((avgSleep / sleepNeedMinutes) * 100) : 0;
-
-  // Sleep pattern analysis
-  const getPattern = () => {
-    if (avgSleep >= sleepNeedMinutes) return { text: 'Good', color: '#00D1A7', icon: '✓' };
-    if (avgSleep >= sleepNeedMinutes * 0.85) return { text: 'Fair', color: '#FFC107', icon: '◐' };
-    return { text:  'Poor', color: '#FF4757', icon: '✗' };
-  };
-
-  const pattern = getPattern();
-
-  const sleepStages = lastNight?.stages || { deep: 0, light: 0, rem: 0, awake: 0 };
-  const totalStages = Object.values(sleepStages).reduce((a, b) => a + b, 0);
+  // Get last 3 sleep sessions
+  const lastThreeSleeps = sleepSessions
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 3);
 
   return (
     <SafeAreaView edges={['top']} className="flex-1 bg-background">
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+      <ScrollView
+        className="flex-1"
+        showsVerticalScrollIndicator={false}
+      >
         {/* Header */}
         <Animated.View entering={FadeInDown} className="px-5 pt-4 pb-2">
-          <Text className="text-textMuted text-sm">Tonight</Text>
+          <Text className="text-textMuted text-sm">Recovery</Text>
           <Text className="text-3xl font-bold text-textPrimary mt-1">Sleep</Text>
         </Animated.View>
 
         {/* Last Night Card */}
         {lastNight ?  (
           <Animated.View entering={FadeInDown. delay(100)} className="mx-5 mt-4">
-            <View className="bg-surface rounded-2xl p-5">
-              {/* Main Sleep Duration */}
-              <View className="flex-row items-end justify-between mb-4">
+            <Pressable className="bg-surface rounded-2xl p-5 active:opacity-90">
+              <View className="flex-row justify-between items-start mb-4">
                 <View>
-                  <Text className="text-textMuted text-xs font-medium mb-2">LAST NIGHT</Text>
+                  <Text className="text-textMuted text-xs font-semibold mb-1">LAST NIGHT</Text>
                   <View className="flex-row items-baseline">
                     <Text className="text-4xl font-bold text-textPrimary">
                       {Math.floor(actualSleepMinutes / 60)}
                     </Text>
-                    <Text className="text-textSecondary text-xl ml-1">h</Text>
+                    <Text className="text-textMuted text-lg ml-1">h</Text>
                     <Text className="text-2xl font-bold text-textPrimary ml-2">
                       {actualSleepMinutes % 60}
                     </Text>
-                    <Text className="text-textSecondary text-lg ml-1">m</Text>
+                    <Text className="text-textMuted text-sm ml-1">m</Text>
                   </View>
                 </View>
-                <View className="items-end">
-                  <View className="w-16 h-16 rounded-full bg-primary/20 items-center justify-center">
-                    <Text className="text-2xl font-bold text-primary">{sleepScore}%</Text>
-                  </View>
-                  <Text className="text-textMuted text-xs mt-2">of goal</Text>
-                </View>
+                <ScoreRing score={sleepScore} size={60} />
               </View>
 
-              {/* Time range */}
-              <View className="border-t border-border pt-3">
-                <View className="flex-row items-center justify-between">
-                  <View className="flex-row items-center flex-1">
-                    <Moon size={14} color="#6B7280" />
-                    <Text className="text-textMuted text-xs ml-2">
-                      {formatTime(lastNight.sleepStart || '')} - {formatTime(lastNight.sleepEnd || '')}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          </Animated.View>
-        ) : (
-          <Animated.View entering={FadeInDown.delay(100)} className="mx-5 mt-4">
-            <View className="bg-surface rounded-2xl p-5 items-center justify-center py-8">
-              <Moon size={32} color="#6B7280" />
-              <Text className="text-textMuted text-sm mt-3">No sleep data yet</Text>
-            </View>
-          </Animated.View>
-        )}
-
-        {/* Sleep Stages */}
-        {lastNight && totalStages > 0 && (
-          <Animated.View entering={FadeInDown.delay(150)} className="mx-5 mt-4">
-            <View className="bg-surface rounded-2xl p-5">
-              <Text className="text-textPrimary font-semibold mb-4">Sleep Stages</Text>
-
-              {/* Stage breakdown */}
-              <View className="space-y-3">
-                {[
-                  { label: 'Deep Sleep', value: sleepStages.deep, color: '#5B4E9E', icon: '◆' },
-                  { label:  'REM Sleep', value: sleepStages.rem, color: '#00D1A7', icon: '◉' },
-                  { label:  'Light Sleep', value: sleepStages.light, color: '#60A5FA', icon: '◐' },
-                  { label:  'Awake', value:  sleepStages.awake, color: '#EF4444', icon: '○' },
-                ].map((stage) => (
-                  <View key={stage.label}>
-                    <View className="flex-row items-center justify-between mb-2">
-                      <View className="flex-row items-center">
-                        <Text style={{ color: stage.color }} className="text-lg mr-2">{stage.icon}</Text>
-                        <Text className="text-textPrimary text-sm font-medium">{stage.label}</Text>
-                      </View>
-                      <Text className="text-textSecondary font-semibold">
-                        {Math.round(stage.value / 60)}m
-                      </Text>
-                    </View>
-                    <View className="h-2 bg-surfaceLight rounded-full overflow-hidden">
-                      <View
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${(stage.value / actualSleepMinutes) * 100}%`,
-                          backgroundColor: stage.color,
-                        }}
-                      />
-                    </View>
-                  </View>
-                ))}
-              </View>
-
-              {/* Sleep quality indicator */}
-              <View className="mt-4 pt-4 border-t border-border">
+              {/* Sleep time details */}
+              <View className="border-t border-border pt-3 mt-3">
                 <View className="flex-row items-center">
-                  <View
-                    className="w-3 h-3 rounded-full mr-2"
-                    style={{ backgroundColor: pattern.color }}
-                  />
-                  <Text className="text-textPrimary text-sm">
-                    Sleep Quality: <Text className="font-semibold" style={{ color: pattern.color }}>{pattern.text}</Text>
+                  <Bed size={14} color="#6B7280" />
+                  <Text className="text-textMuted text-xs ml-2">
+                    {lastNight.sleepStart ?  formatTime(lastNight.sleepStart) : '--'} - {lastNight.sleepEnd ? formatTime(lastNight.sleepEnd) : '--'}
                   </Text>
                 </View>
               </View>
+            </Pressable>
+          </Animated.View>
+        ) : null}
+
+        {/* Sleep Stages */}
+        {lastNight && (
+          <Animated.View entering={FadeInDown.delay(150)} className="mx-5 mt-4">
+            <View className="bg-surface rounded-2xl p-5">
+              <Text className="text-textPrimary font-semibold text-lg mb-4">Sleep Stages</Text>
+
+              {lastNight.stages && Object.values(lastNight.stages).some(v => v > 0) ? (
+                <View className="space-y-3">
+                  {[
+                    { label: 'Deep', value: lastNight.stages.deep, color: '#6366F1', icon: '◆' },
+                    { label:  'Light', value: lastNight.stages.light, color: '#60A5FA', icon: '◐' },
+                    { label:  'REM', value: lastNight. stages.rem, color: '#00D1A7', icon: '◉' },
+                    { label: 'Awake', value: lastNight.stages.awake, color: '#EF4444', icon:  '○' },
+                  ].map((stage) => {
+                    const percent = actualSleepMinutes > 0 ? (stage.value / actualSleepMinutes) * 100 : 0;
+                    return (
+                      <View key={stage. label}>
+                        <View className="flex-row items-center justify-between mb-2">
+                          <View className="flex-row items-center">
+                            <Text style={{ color: stage.color }} className="text-lg mr-2">{stage.icon}</Text>
+                            <Text className="text-textPrimary text-sm font-medium">{stage.label}</Text>
+                          </View>
+                          <Text className="text-textMuted text-xs">
+                            {Math.round(stage.value)}m ({Math.round(percent)}%)
+                          </Text>
+                        </View>
+                        <View className="h-2 bg-surfaceLight rounded-full overflow-hidden">
+                          <View
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${percent}%`,
+                              backgroundColor: stage.color,
+                            }}
+                          />
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <View className="h-20 items-center justify-center">
+                  <Text className="text-textMuted text-xs text-center">
+                    Sleep stages not available from Polar API
+                  </Text>
+                </View>
+              )}
             </View>
           </Animated.View>
         )}
 
-        {/* Sleep Debt Card */}
-        <Animated. View entering={FadeInDown. delay(200)} className="mx-5 mt-4">
+        {/* Key Metrics */}
+        <View className="flex-row mx-5 mt-4 space-x-3">
+          {/* Sleep Score */}
+          <View className="flex-1 bg-surface rounded-2xl p-4">
+            <Text className="text-textMuted text-xs font-medium">SLEEP SCORE</Text>
+            <Text className="text-textPrimary text-2xl font-bold mt-2">
+              {sleepScore > 0 ? sleepScore : '--'}
+            </Text>
+            <Text className="text-textMuted text-xs mt-1">Quality rating</Text>
+          </View>
+
+          {/* Sleep Debt Quick View */}
+          <View className="flex-1 bg-surface rounded-2xl p-4">
+            <Text className="text-textMuted text-xs font-medium">SLEEP DEBT</Text>
+            <Text
+              className={`text-2xl font-bold mt-2 ${
+                sleepDebt > 60
+                  ? 'text-recovery-low'
+                  : sleepDebt > 30
+                  ?  'text-warning'
+                  : 'text-recovery-high'
+              }`}
+            >
+              {sleepDebt > 0 ? formatDuration(sleepDebt) : '0h'}
+            </Text>
+            <Text className="text-textMuted text-xs mt-1">7-day average</Text>
+          </View>
+        </View>
+
+        {/* Detailed Sleep Debt Card */}
+        <View className="mx-5 mt-4">
           <SleepDebtCard
             debtMinutes={sleepDebt}
             sleepGoalMinutes={sleepNeedMinutes}
           />
-        </Animated.View>
+        </View>
 
-        {/* Insights */}
-        {lastNight && sleepScore < 80 && (
-          <Animated.View entering={FadeInDown.delay(250)} className="mx-5 mt-4">
-            <View className="bg-recovery-low/10 border border-recovery-low/30 rounded-2xl p-4 flex-row">
-              <View className="w-10 h-10 rounded-full bg-recovery-low/20 items-center justify-center mr-3">
-                <AlertCircle size={18} color="#FF4757" />
-              </View>
-              <View className="flex-1">
-                <Text className="text-recovery-low font-semibold text-sm">Sleep Below Goal</Text>
-                <Text className="text-textMuted text-xs mt-1">
-                  You got {Math.round((sleepScore - 100) * -1)}% less sleep than recommended.  Prioritize rest today.
-                </Text>
-              </View>
+        {/* Weekly Average */}
+        <View className="mx-5 mt-4 bg-surface rounded-2xl p-4">
+          <View className="flex-row justify-between items-center">
+            <View>
+              <Text className="text-textMuted text-xs font-medium">7-DAY AVERAGE</Text>
+              <Text className="text-textPrimary text-xl font-bold mt-1">
+                {weeklyAvg > 0 ? formatDuration(Math.round(weeklyAvg)) : '--'}
+              </Text>
             </View>
-          </Animated.View>
-        )}
-
-        {/* Trend Chart */}
-        <Animated.View entering={FadeInDown.delay(300)} className="mx-5 mt-4">
-          <View className="bg-surface rounded-2xl p-5">
-            <View className="flex-row justify-between items-center mb-4">
-              <Text className="text-textPrimary font-semibold">Sleep Trend</Text>
-              <View className="flex-row bg-surfaceLight rounded-lg p-1">
-                {(['7d', '30d', '90d'] as const).map((range) => (
-                  <Pressable
-                    key={range}
-                    onPress={() => setTimeRange(range)}
-                    className={`px-3 py-1 rounded ${timeRange === range ? 'bg-primary' : ''}`}
-                  >
-                    <Text className={`text-xs font-medium ${timeRange === range ?  'text-background' : 'text-textMuted'}`}>
-                      {range === '7d' ? '1w' : range === '30d' ? '1m' : '3m'}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
+            <View className="items-end">
+              <Text className="text-textMuted text-xs">Goal</Text>
+              <Text className="text-textSecondary text-sm">
+                {userSettings?.sleepGoalHours ?? 8}h
+              </Text>
             </View>
-
-            {trendData.some((d) => d.value > 0) ? (
-              <>
-                <TrendChart data={trendData} height={200} goalLine={sleepNeedMinutes / 60} color="#00D1A7" />
-                <View className="mt-4 pt-4 border-t border-border">
-                  <View className="flex-row justify-between">
-                    <View>
-                      <Text className="text-textMuted text-xs">Average</Text>
-                      <Text className="text-textPrimary font-bold mt-1">
-                        {formatDuration(Math.round(avgSleep))}
-                      </Text>
-                    </View>
-                    <View>
-                      <Text className="text-textMuted text-xs">Goal</Text>
-                      <Text className="text-textPrimary font-bold mt-1">
-                        {formatDuration(sleepNeedMinutes)}
-                      </Text>
-                    </View>
-                    <View items-end>
-                      <Text className="text-textMuted text-xs">Target %</Text>
-                      <Text className={`font-bold mt-1 ${avgScore >= 100 ? 'text-recovery-high' : avgScore >= 85 ? 'text-warning' : 'text-recovery-low'}`}>
-                        {avgScore}%
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              </>
-            ) : (
-              <View className="h-32 items-center justify-center">
-                <Text className="text-textMuted text-sm">No data available for this period</Text>
-              </View>
-            )}
           </View>
-        </Animated. View>
+          {/* Progress bar */}
+          <View className="h-2 bg-surfaceLight rounded-full mt-3 overflow-hidden">
+            <View
+              className="h-full rounded-full bg-primary"
+              style={{ width: `${Math.min(100, (weeklyAvg / sleepNeedMinutes) * 100)}%` }}
+            />
+          </View>
+        </View>
 
-        {/* Sleep Tips */}
-        <Animated. View entering={FadeInDown. delay(350)} className="mx-5 mt-4 mb-6">
-          <View className="bg-surface rounded-2xl p-5">
-            <Text className="text-textPrimary font-semibold mb-3">Sleep Tips</Text>
-            <View className="space-y-2">
-              {[
-                { icon: '🌙', text: 'Maintain consistent bedtime and wake time' },
-                { icon: '📵', text: 'Avoid screens 1 hour before bed' },
-                { icon: '🌡️', text: 'Keep bedroom cool (around 65-68°F)' },
-                { icon: '☕', text: 'Limit caffeine after 2 PM' },
-              ].map((tip, i) => (
-                <View key={i} className="flex-row items-center">
-                  <Text className="text-lg mr-3">{tip.icon}</Text>
-                  <Text className="text-textSecondary text-sm flex-1">{tip.text}</Text>
-                </View>
+        {/* Sleep Duration Trend */}
+        <View className="mx-5 mt-4 bg-surface rounded-2xl p-5">
+          <View className="flex-row justify-between items-center mb-4">
+            <Text className="text-textPrimary text-lg font-semibold">Duration Trend</Text>
+            <View className="flex-row bg-surfaceLight rounded-lg p-1">
+              {(['7d', '30d', '90d'] as const).map((range) => (
+                <Pressable
+                  key={range}
+                  onPress={() => setTimeRange(range)}
+                  className={`px-3 py-1 rounded ${timeRange === range ? 'bg-primary' : ''}`}
+                >
+                  <Text
+                    className={`text-xs font-medium ${
+                      timeRange === range ? 'text-background' : 'text-textMuted'
+                    }`}
+                  >
+                    {range === '7d' ? '1w' : range === '30d' ? '1m' : '3m'}
+                  </Text>
+                </Pressable>
               ))}
             </View>
           </View>
-        </Animated.View>
+
+          <TrendChart
+            data={getTrendData(timeRange, 'duration')}
+            height={200}
+            color="#8B5CF6"
+            goalLine={sleepNeedMinutes / 60}
+          />
+        </View>
+
+        {/* Recent Sleep Sessions */}
+        {lastThreeSleeps.length > 0 && (
+          <Animated.View entering={FadeInDown.delay(200)} className="mx-5 mt-6 mb-6">
+            <View className="flex-row justify-between items-center mb-3">
+              <Text className="text-textPrimary text-lg font-semibold">Recent Sleep</Text>
+              {lastThreeSleeps.length > 0 && (
+                <Text className="text-textMuted text-xs">{lastThreeSleeps. length} nights</Text>
+              )}
+            </View>
+
+            <View className="bg-surface rounded-2xl overflow-hidden">
+              {lastThreeSleeps.map((sleep, index) => (
+                <Pressable
+                  key={sleep.id}
+                  className={`p-4 flex-row items-center justify-between ${
+                    index !== lastThreeSleeps.length - 1 ? 'border-b border-border' : ''
+                  } active:bg-surfaceLight`}
+                >
+                  {/* Left side:  Date and time */}
+                  <View className="flex-1">
+                    <View className="flex-row items-baseline">
+                      <Text className="text-textPrimary font-semibold">
+                        {formatDuration(Math.round(sleep.totalSleepMinutes))}
+                      </Text>
+                      <Text className="text-textMuted text-sm ml-2">
+                        {getDayOfWeek(sleep.date)}
+                      </Text>
+                    </View>
+                    <View className="flex-row items-center mt-1">
+                      <Moon size={12} color="#6B7280" />
+                      <Text className="text-textMuted text-xs ml-2">
+                        {sleep.sleepStart ? formatTime(sleep.sleepStart) : '--'} - {sleep.sleepEnd ? formatTime(sleep.sleepEnd) : '--'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Right side: Sleep Score */}
+                  <View className="items-end ml-4">
+                    <View
+                      className={`w-12 h-12 rounded-full items-center justify-center ${
+                        sleep.sleep_score
+                          ? sleep.sleep_score >= 80
+                            ? 'bg-recovery-high/20'
+                            : sleep.sleep_score >= 60
+                            ? 'bg-warning/20'
+                            : 'bg-recovery-low/20'
+                          :  'bg-surfaceLight'
+                      }`}
+                    >
+                      {sleep.sleep_score ?  (
+                        <Text
+                          className={`font-bold text-sm ${
+                            sleep.sleep_score >= 80
+                              ?  'text-recovery-high'
+                              : sleep.sleep_score >= 60
+                              ?  'text-warning'
+                              : 'text-recovery-low'
+                          }`}
+                        >
+                          {Math.round(sleep.sleep_score)}
+                        </Text>
+                      ) : (
+                        <Text className="text-textMuted text-xs">--</Text>
+                      )}
+                    </View>
+                    <Text className="text-textMuted text-xs mt-1">score</Text>
+                  </View>
+
+                  <ChevronRight size={16} color="#6B7280" className="ml-3" />
+                </Pressable>
+              ))}
+            </View>
+          </Animated. View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
