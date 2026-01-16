@@ -61,6 +61,7 @@ async function pullLatestFromSupabaseImpl(): Promise<{
   }
 }
 
+
 export const polarOAuthService = {
   async startOAuthFlow(): Promise<Result> {
     try {
@@ -152,6 +153,25 @@ export const polarOAuthService = {
       return { success: true };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : 'Disconnect failed.' };
+    }
+    // Add this function to polarOAuthService object (before the closing brace on line 157)
+
+  async checkPolarConnection(): Promise<boolean> {
+    try {
+      const userId = getUserIdOrNull();
+      if (!userId) return false;
+
+      const { data } = await supabase
+        .from('profiles')
+        .select('polar_user_id, polar_connected_at')
+        .eq('id', userId)
+        .single();
+
+      if (!data) return false;
+      return ! !(data.polar_user_id && data.polar_connected_at);
+    } catch (e) {
+      console.error('Failed to check Polar connection:', e);
+      return false;
     }
   },
 };
