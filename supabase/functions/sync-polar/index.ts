@@ -177,7 +177,7 @@ async function syncExercises(
   return synced;
 }
 
-// ✅ CORRECTED: Direct sleep endpoint (NOT transaction-based)
+// ✅ CORRECTED: Sleep sync with proper duration calculation
 async function syncSleep(
   supabase: any,
   userId: string,
@@ -187,7 +187,6 @@ async function syncSleep(
   try {
     console.log(`[syncSleep] Starting sleep sync for user ${userId}`);
 
-    // ✅ Use direct endpoint:  GET /v3/users/sleep (returns { nights: [...] })
     const sleepUrl = "https://www.polaraccesslink.com/v3/users/sleep";
     console.log(`[syncSleep] Fetching from ${sleepUrl}`);
 
@@ -202,48 +201,68 @@ async function syncSleep(
       "Polar sleep fetch"
     );
 
-    console.log(`[syncSleep] Sleep response keys: ${Object.keys(sleepResponse ??  {})}`);
+    console.log(`[syncSleep] Sleep response keys: ${Object.keys(sleepResponse ??   {})}`);
 
     if (!sleepResponse) {
       console.log(`[syncSleep] Empty response`);
       return 0;
     }
 
-    // ✅ Response has 'nights' array with full sleep data inline
-    const nightsList:  any[] = sleepResponse?. nights ?? [];
+    const nightsList:   any[] = sleepResponse?. nights ??  [];
     console.log(`[syncSleep] Found ${nightsList.length} nights`);
 
     let synced = 0;
 
     for (const night of nightsList) {
       try {
-        console.log(`[syncSleep] Processing night for date: ${night?. date}`);
-        console.log(`[syncSleep] Night data keys: ${Object.keys(night ??  {})}`);
+        console.log(`[syncSleep] Processing night for date:   ${night?. date}`);
 
-        if (!night?. date) {
+        if (! night?.date) {
           console.log(`[syncSleep] No date in night data`);
           continue;
         }
 
-        // ✅ Map Polar sleep response fields to database schema
+        // ✅ FIXED:  Correctly calculate duration from Polar data
+        // Polar returns sleep duration in seconds in the 'duration' field
+        // But we also need to calculate it from sleep_end_time - sleep_start_time
+        let durationSeconds = 0;
+        
+        if (night?.duration) {
+          // Use duration if available (in seconds from Polar)
+          durationSeconds = night. duration;
+        } else if (night?.sleep_start_time && night?.sleep_end_time) {
+          // Fallback:  calculate from start/end times
+          const startTime = new Date(night.sleep_start_time).getTime();
+          const endTime = new Date(night.sleep_end_time).getTime();
+          durationSeconds = (endTime - startTime) / 1000;
+        } else {
+          console.log(`[syncSleep] No duration data for ${night?. date}`);
+          durationSeconds = 0;
+        }
+
         const sleepRecord = {
           user_id: userId,
-          polar_sleep_id: `${night?. date}_${night?.device_id || "unknown"}`, // Unique identifier
-          sleep_date: night?.date || null,
+          polar_sleep_id: `${night?.date}_${night?.device_id || "unknown"}`,
+          sleep_date: night?. date || null,
           bedtime: night?.sleep_start_time || null,
           wake_time: night?.sleep_end_time || null,
-          duration_minutes: Math. round(((night?.duration ??  0) / 60)), // Total sleep duration
-          deep_minutes: Math.round(((night?. deep_sleep ?? 0) / 60)), // deep_sleep is in seconds
-          light_minutes: Math.round(((night?.light_sleep ?? 0) / 60)), // light_sleep is in seconds
-          rem_minutes: Math.round(((night?.rem_sleep ?? 0) / 60)), // rem_sleep is in seconds
-          awake_minutes: Math.round(((night?.total_interruption_duration ?? 0) / 60)), // interruptions as awake time
+          // ✅ FIXED: Convert seconds to minutes
+          duration_minutes: Math.round(durationSeconds / 60),
+          // ✅ Sleep stages are already in seconds from Polar, convert to minutes
+          deep_minutes: Math.round(((night?.deep_sleep ??  0) / 60)),
+          light_minutes: Math. round(((night?.light_sleep ?? 0) / 60)),
+          rem_minutes: Math.round(((night?.rem_sleep ?? 0) / 60)),
+          // ✅ Total interruption as awake time
+          awake_minutes: Math.round(((night?.total_interruption_duration ?? 0) / 60)),
+          // ✅ Sleep score (0-100)
           sleep_score: night?.sleep_score ??  null,
           raw_data: night,
         };
 
+        console.log(`[syncSleep] Calculated duration: ${sleepRecord.duration_minutes} minutes from ${durationSeconds} seconds`);
         console.log(`[syncSleep] Upserting sleep record for ${night?.date}`);
 
-        await supabase.from("sleep_sessions").upsert(
+        await supabase. from("sleep_sessions").upsert(
           sleepRecord,
           { onConflict: "user_id,polar_sleep_id" }
         );
@@ -251,7 +270,7 @@ async function syncSleep(
         synced++;
         console.log(`[syncSleep] Successfully upserted night ${synced}`);
       } catch (nightError) {
-        console.error(`[syncSleep] Error processing night:  `, nightError);
+        console.error(`[syncSleep] Error processing night:   `, nightError);
         continue;
       }
     }
