@@ -37,7 +37,7 @@ export interface SleepSession {
 
 export interface DailyMetrics {
   date: string;
-  recoveryScore?: number;
+  recoveryScore?:  number;
   strainScore?: number;
   sleepScore?: number;
   bodyBattery?: number;
@@ -45,6 +45,8 @@ export interface DailyMetrics {
   trainingLoad?: number;
   hrv?: number;
   rhr?: number;
+  vo2Max?: number;  // ✅ ADD THIS
+  trainingLoadStatus?: string;  // ✅ ADD THIS
 }
 
 export interface BodyBatteryReading {
@@ -52,9 +54,12 @@ export interface BodyBatteryReading {
   value: number;
 }
 
+// ✅ ADD these interfaces to app-store.ts if missing
 export interface TrainingLoadHistory {
-  date: string;
-  value: number;
+  date:  string;
+  acuteLoad: number;
+  chronicLoad: number;
+  status: string;
 }
 
 export interface Insight {
@@ -167,10 +172,10 @@ export const useAppStore = create<AppState>()(
         });
       },
 
-      // ✅ FIXED: sync, then pull data from Supabase into Zustand so UI updates
+      // ✅ FIXED: Calculate training load and strain from workouts
       syncData:  async () => {
         const result = await polarOAuthService.syncPolarData();
-        if (!result.success) return result;
+        if (! result.success) return result;
 
         const pulled = await polarOAuthService.pullLatestFromSupabase();
         if (!pulled.success) {
@@ -180,7 +185,7 @@ export const useAppStore = create<AppState>()(
           };
         }
 
-        // ✅ Map workouts
+        // Map workouts
         const mappedWorkouts:  Workout[] = (pulled.workouts || []).map((w:  any) => ({
           id: `polar_${w.polar_exercise_id}`,
           polarId: w.polar_exercise_id,
@@ -194,42 +199,88 @@ export const useAppStore = create<AppState>()(
           source: 'polar',
         }));
 
-        // ✅ Map sleep sessions - FIX: sleep_date -> date
-        const mappedSleeps: SleepSession[] = (pulled.sleepSessions || []).map((s: any) => ({
+        // Map sleep sessions
+        const mappedSleeps: SleepSession[] = (pulled. sleepSessions || []).map((s: any) => ({
           id: `polar_sleep_${s.polar_sleep_id}`,
           polarId: s.polar_sleep_id,
-          date: s. sleep_date,  // ✅ Map sleep_date to date
+          date: s.sleep_date,
           sleepStart: s.bedtime ??  undefined,
-          sleepEnd:  s.wake_time ?? undefined,
+          sleepEnd: s.wake_time ?? undefined,
           totalSleepMinutes: s.duration_minutes || 0,
           timeInBedMinutes: s.duration_minutes || 0,
           stages: {
             awake: s.awake_minutes || 0,
-            light:  s.light_minutes || 0,
-            deep: s.deep_minutes || 0,
+            light: s.light_minutes || 0,
+            deep: s. deep_minutes || 0,
             rem: s.rem_minutes || 0,
           },
-          sleep_score: s.sleep_score ?? undefined,  // ✅ Keep this for sleep tab
+          sleep_score: s.sleep_score ??  undefined,
           source: 'polar',
         }));
 
-        // ✅ Map daily metrics with recovery score, HRV, RHR
+        // ✅ NEW: Calculate strain score from workouts per day
+        const strainByDate:  { [date: string]: number } = {};
+        mappedWorkouts.forEach((w) => {
+          if (! strainByDate[w.date]) strainByDate[w.date] = 0;
+          strainByDate[w.date] += w.strainScore || 0;
+        });
+
+        // ✅ NEW: Calculate training load history (7-day and 28-day rolling)
+        const trainingLoadHistory:  TrainingLoadHistory[] = [];
+        const today = new Date();
+        for (let i = 0; i < 90; i++) {
+          const date = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
+          const dateStr = date.toISOString().split('T')[0];
+
+          // 7-day acute load
+          const last7 = mappedWorkouts.filter((w) => {
+            const workoutDate = new Date(w. date);
+            const daysDiff = Math.floor((date. getTime() - workoutDate.getTime()) / (24 * 60 * 60 * 1000));
+            return daysDiff >= 0 && daysDiff < 7;
+          });
+          const acuteLoad = last7.reduce((sum, w) => sum + (w.strainScore || 0), 0);
+
+          // 28-day chronic load
+          const last28 = mappedWorkouts. filter((w) => {
+            const workoutDate = new Date(w.date);
+            const daysDiff = Math.floor((date.getTime() - workoutDate.getTime()) / (24 * 60 * 60 * 1000));
+            return daysDiff >= 0 && daysDiff < 28;
+          });
+          const chronicLoad = last28.reduce((sum, w) => sum + (w.strainScore || 0), 0);
+
+          // Determine status based on acute/chronic ratio
+          const ratio = chronicLoad > 0 ? acuteLoad / chronicLoad : 1;
+          let status = 'maintaining';
+          if (ratio > 1.3) status = 'overreaching';
+          else if (ratio > 1.1) status = 'increasing';
+          else if (ratio < 0.8) status = 'decreasing';
+
+          trainingLoadHistory.push({
+            date:  dateStr,
+            acuteLoad:  Math.round(acuteLoad),
+            chronicLoad: Math.round(chronicLoad),
+            status,
+          });
+        }
+
+        // Map daily metrics
         const mappedDailyMetrics: DailyMetrics[] = (pulled.dailyMetrics || []).map((m: any) => {
-          // Find the sleep session for this date to get sleep_score
           const sleepForDate = (pulled.sleepSessions || []).find(
-            (s: any) => s.sleep_date === m.metric_date
+            (s:  any) => s.sleep_date === m.metric_date
           );
 
           return {
             date: m.metric_date,
             recoveryScore: m.recovery_score ?? undefined,
-            strainScore: m.strain_score ?? undefined,
-            sleepScore: sleepForDate?. sleep_score ?  Math.round(sleepForDate.sleep_score) : undefined,
-            bodyBattery: m.body_battery ?? undefined,
+            strainScore: strainByDate[m.metric_date] ?? undefined,  // ✅ FROM workouts
+            sleepScore: sleepForDate?. sleep_score ?  Math.round(sleepForDate. sleep_score) : undefined,
+            bodyBattery: m. body_battery ?? undefined,
             bodyTemperature: m.body_temperature_celsius ?? undefined,
             trainingLoad: m.training_load ?? undefined,
-            hrv: m.hrv ?? undefined,
+            hrv: m. hrv ?? undefined,
             rhr: m.resting_hr ?? undefined,
+            vo2Max: undefined,  // Not available from Polar nightly recharge
+            trainingLoadStatus: trainingLoadHistory.find((t) => t.date === m.metric_date)?.status,
           };
         });
 
@@ -237,6 +288,7 @@ export const useAppStore = create<AppState>()(
           workouts: mappedWorkouts,
           sleepSessions: mappedSleeps,
           dailyMetrics: mappedDailyMetrics,
+          trainingLoadHistory,  // ✅ ADD THIS
           lastSyncDate: new Date().toISOString(),
           isDemoMode: false,
         });

@@ -16,14 +16,14 @@ export default function RecoveryScreen() {
 
   const dailyMetrics = useAppStore((s): DailyMetrics[] => s.dailyMetrics);
 
-  // Get today's metrics
-  const today = new Date().toISOString().split('T')[0];
-  const todayMetrics = dailyMetrics. find((m:  DailyMetrics) => m.date === today);
-  const recoveryScore = todayMetrics?. recoveryScore ?? 0;
-  const hrv = todayMetrics?.hrv ?? 0;
-  const rhr = todayMetrics?. rhr ?? 0;
+  // In recovery.tsx, verify you're reading from the correct data
+  const todayMetrics = dailyMetrics.find((m: DailyMetrics) => m.date === today);
+  const recoveryScore = todayMetrics?.recoveryScore ?? 0;  
+  const hrv = todayMetrics?.hrv ?? 0;  
+  const rhr = todayMetrics?.rhr ?? 0;  
+  const sleepScore = todayMetrics?. sleepScore ?? 0;  
   const bodyBattery = todayMetrics?.bodyBattery ?? 0;
-  const sleepScore = todayMetrics?. sleepScore ?? 0;
+
 
   // Calculate deltas from 7-day average
   const getLast7Days = () => {
