@@ -288,7 +288,7 @@ async function syncSleep(
   }
 }
 
-// ✅ UPDATED: Calculate recovery score before inserting
+// ✅ SIMPLIFIED:  Calculate recovery score inline
 async function syncNightlyRecharge(
   supabase: any,
   userId: string,
@@ -315,12 +315,6 @@ async function syncNightlyRecharge(
 
     if (rechargeList.length === 0) return 0;
 
-    // Get all sleep sessions to calculate sleep scores
-    const { data: allSleep } = await supabase
-      . from("sleep_sessions")
-      .select("sleep_date, duration_minutes")
-      .eq("user_id", userId);
-
     let synced = 0;
 
     for (const recharge of rechargeList) {
@@ -331,38 +325,45 @@ async function syncNightlyRecharge(
         const hrv = recharge. heart_rate_variability_avg ??  null;
         const rhr = recharge.heart_rate_avg ?  Math.round(recharge.heart_rate_avg) : null;
 
-        // Find sleep score for this date
-        const sleepForDate = (allSleep || []).find((s: any) => s.sleep_date === date);
-        const sleepScore = sleepForDate
-          ?  Math.round((sleepForDate.duration_minutes / (8 * 60)) * 100)
-          : 0;
+        // ✅ Simple recovery score calculation
+        let recoveryScore = null;
+        if (hrv && rhr && hrv > 0 && rhr > 0) {
+          // HRV component (40%)
+          const hrvRatio = Math.min(hrv / 30, 1.5);
+          const hrvComponent = hrvRatio * 100 * 0.4;
 
-        // Simple recovery score:  (HRV/30) * 40 + (60/RHR) * 20 + sleepScore * 30 + 10
-        let recoveryScore = 0;
-        if (hrv && rhr) {
-          const hrvComponent = Math.min((hrv / 30) * 40, 40);
-          const rhrComponent = Math.min((60 / rhr) * 20, 20);
-          const sleepComponent = sleepScore * 0.3;
-          recoveryScore = Math.round(hrvComponent + rhrComponent + sleepComponent + 10);
+          // RHR component (20%) - inverted
+          const rhrRatio = Math.min(60 / rhr, 1.3);
+          const rhrComponent = rhrRatio * 100 * 0.2;
+
+          // Sleep component (30%) - default to 70
+          const sleepComponent = 70 * 0.3;
+
+          // Prior strain component (10%) - default to 5
+          const strainComponent = ((21 - 5) / 21) * 100 * 0.1;
+
+          recoveryScore = Math.round(
+            Math.min(100, Math.max(0, hrvComponent + rhrComponent + sleepComponent + strainComponent))
+          );
+
+          console.log(
+            `[syncNightlyRecharge] Calculated recovery score for ${date}: ${recoveryScore} (HRV=${hrv}, RHR=${rhr})`
+          );
         }
 
-        recoveryScore = Math.min(100, Math.max(0, recoveryScore));
-
         const dailyMetric = {
-          user_id:  userId,
-          metric_date:  date,
-          recovery_score:  recoveryScore || null,
+          user_id: userId,
+          metric_date: date,
+          recovery_score: recoveryScore,
           hrv: hrv,
           resting_hr: rhr,
           nightly_recharge_status: recharge.nightly_recharge_status ??  null,
           ans_charge: recharge.ans_charge ?? null,
-          breathing_rate_avg:  recharge.breathing_rate_avg ?? null,
+          breathing_rate_avg: recharge. breathing_rate_avg ?? null,
           updated_at: new Date().toISOString(),
         };
 
-        console.log(
-          `[syncNightlyRecharge] Inserting metric for ${date}:  recovery_score=${recoveryScore}, HRV=${hrv}, RHR=${rhr}`
-        );
+        console.log(`[syncNightlyRecharge] Upserting ${date} with recovery_score=${recoveryScore}`);
 
         const { error } = await supabase
           .from("daily_metrics")
@@ -373,7 +374,7 @@ async function syncNightlyRecharge(
           console.error(`[syncNightlyRecharge] Insert error:  ${JSON.stringify(error)}`);
         } else {
           synced++;
-          console.log(`[syncNightlyRecharge] Inserted ${date}, count=${synced}`);
+          console.log(`[syncNightlyRecharge] Inserted ${date}, synced count=${synced}`);
         }
       } catch (e) {
         console.error(`[syncNightlyRecharge] Exception:  ${e}`);
