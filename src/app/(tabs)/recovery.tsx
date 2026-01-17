@@ -19,14 +19,15 @@ export default function RecoveryScreen() {
   // Get today's metrics
   const today = new Date().toISOString().split('T')[0];
   const todayMetrics = dailyMetrics. find((m:  DailyMetrics) => m.date === today);
-  const recoveryScore = todayMetrics?. recoveryScore ??  0;
+  const recoveryScore = todayMetrics?. recoveryScore ?? 0;
   const hrv = todayMetrics?.hrv ?? 0;
-  const rhr = todayMetrics?.rhr ?? 0;
+  const rhr = todayMetrics?. rhr ?? 0;
   const bodyBattery = todayMetrics?.bodyBattery ?? 0;
+  const sleepScore = todayMetrics?. sleepScore ?? 0;
 
   // Calculate deltas from 7-day average
   const getLast7Days = () => {
-    const last7 = dailyMetrics. slice(-7);
+    const last7 = dailyMetrics.slice(-7);
     return last7;
   };
 
@@ -37,23 +38,24 @@ export default function RecoveryScreen() {
   const hrvDelta = hrv - avgHRV;
   const rhrDelta = rhr - avgRHR;
 
-  // Get trend data based on timeRange
-  const trendData = dailyMetrics
-    .slice(timeRange === '7d' ? -7 : timeRange === '30d' ? -30 : -90)
-    .map((m) => {
-      if (selectedMetric === 'recovery') {
-        return { date: m.date, value: m.recoveryScore ??  0 };
-      } else if (selectedMetric === 'hrv') {
-        return { date: m.date, value: m.hrv ?? 0 };
-      } else {
-        return { date: m. date, value: m.rhr ?? 0 };
-      }
-    });
+  // Get trend data
+  const getTrendData = (range: TimeRange, metric: MetricType) => {
+    const days = range === '7d' ?  7 : range === '30d' ? 30 : 90;
+    return dailyMetrics
+      .slice(-days)
+      .map((m: DailyMetrics) => {
+        if (metric === 'recovery') {
+          return { date: m.date, value: m.recoveryScore ??  0 };
+        } else if (metric === 'hrv') {
+          return { date:  m.date, value: m. hrv ?? 0 };
+        } else {
+          return { date: m. date, value: m.rhr ?? 0 };
+        }
+      });
+  };
 
-  const TrendIcon = ({ delta, inverted = false }: { delta: number; inverted?: boolean }) => {
+  const TrendIcon = ({ delta, inverted = false }: { delta:  number; inverted?: boolean }) => {
     const isPositive = inverted ? delta < 0 : delta > 0;
-    const isNegative = inverted ? delta > 0 : delta < 0;
-
     if (Math.abs(delta) < 0.5) {
       return <Minus size={14} color="#6B7280" />;
     }
@@ -93,7 +95,7 @@ export default function RecoveryScreen() {
           </View>
         </View>
 
-        {/* Key Metrics */}
+        {/* Key Metrics Row */}
         <View className="flex-row mx-5 mt-4 space-x-3">
           {/* HRV Card */}
           <View className="flex-1 bg-surface rounded-2xl p-4">
@@ -129,16 +131,16 @@ export default function RecoveryScreen() {
             </View>
           </View>
 
-          {/* Body Battery Card */}
+          {/* Sleep Score Card */}
           <View className="flex-1 bg-surface rounded-2xl p-4">
             <View className="flex-row items-center justify-between">
-              <Text className="text-textMuted text-xs font-medium">BATTERY</Text>
+              <Text className="text-textMuted text-xs font-medium">SLEEP</Text>
               <Info size={14} color="#6B7280" />
             </View>
             <Text className="text-textPrimary text-2xl font-bold mt-2">
-              {bodyBattery > 0 ? `${Math.round(bodyBattery)}` : '--'}
+              {sleepScore > 0 ? `${Math.round(sleepScore)}%` : '--'}
             </Text>
-            <Text className="text-xs text-textMuted mt-2">/ 100</Text>
+            <Text className="text-xs text-textMuted mt-2">score</Text>
           </View>
         </View>
 
@@ -178,10 +180,10 @@ export default function RecoveryScreen() {
         </View>
 
         {/* Trend Chart */}
-        {trendData. length > 0 && (
+        {getTrendData(timeRange, selectedMetric).length > 0 && (
           <View className="mx-5 mt-4 bg-surface rounded-2xl p-5">
             <TrendChart
-              data={trendData}
+              data={getTrendData(timeRange, selectedMetric)}
               color={selectedMetric === 'recovery' ?  '#00D1A7' : selectedMetric === 'hrv' ?  '#3B82F6' : '#FF6B35'}
               height={140}
               showLabels

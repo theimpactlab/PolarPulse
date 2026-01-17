@@ -42,6 +42,8 @@ export interface DailyMetrics {
   bodyBattery?: number;
   bodyTemperature?: number;
   trainingLoad?: number;
+  hrv?: number;  // ✅ ADD THIS
+  rhr?: number;  // ✅ ADD THIS
 }
 
 export interface BodyBatteryReading {
@@ -208,27 +210,25 @@ export const useAppStore = create<AppState>()(
           source: 'polar',
         }));
 
-        // ✅ FIXED:  Map daily metrics from database (recovery score already calculated in edge function)
-        const mappedDailyMetrics:  DailyMetrics[] = (pulled.dailyMetrics || []).map((m: any) => ({
-          date: m.metric_date,
-          recoveryScore: m.recovery_score ?? undefined,
-          strainScore: m.strain_score ?? undefined,
-          sleepScore: m.sleep_score ?? undefined,
-          bodyBattery: m.body_battery ?? undefined,
-          bodyTemperature: m.body_temperature_celsius ?? undefined,
-          trainingLoad: m.training_load ?? undefined,
-        }));
+        // ✅ FIXED: Map daily metrics from database
+        const mappedDailyMetrics:  DailyMetrics[] = (pulled.dailyMetrics || []).map((m:  any) => {
+          // Find the sleep session for this date to get sleep_score
+          const sleepForDate = (pulled.sleepSessions || []).find(
+            (s: any) => s.sleep_date === m.metric_date
+          );
 
-        set({
-          workouts:  mappedWorkouts,
-          sleepSessions: mappedSleeps,
-          dailyMetrics: mappedDailyMetrics,
-          lastSyncDate:  new Date().toISOString(),
-          isDemoMode: false,
+          return {
+            date: m.metric_date,
+            recoveryScore: m.recovery_score ??  undefined,
+            strainScore: m.strain_score ??  undefined,
+            sleepScore: sleepForDate?. sleep_score ?? undefined, // ✅ FROM sleep_sessions
+            bodyBattery: m.body_battery ?? undefined,
+            bodyTemperature: m.body_temperature_celsius ?? undefined,
+            trainingLoad: m.training_load ?? undefined,
+            hrv: m.hrv ?? undefined,  // ✅ ADD THIS
+            rhr: m.resting_hr ?? undefined,  // ✅ ADD THIS
+          };
         });
-
-        return { success: true, synced: result. synced ??  0 };
-      },
 
       // Apple Health actions
       checkAppleHealthAvailability: () => {
