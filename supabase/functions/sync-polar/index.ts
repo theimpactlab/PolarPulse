@@ -288,7 +288,6 @@ async function syncSleep(
   }
 }
 
-// ✅ SIMPLIFIED:  Calculate recovery score inline
 async function syncNightlyRecharge(
   supabase: any,
   userId: string,
@@ -322,24 +321,20 @@ async function syncNightlyRecharge(
         const date = recharge?. date;
         if (!date) continue;
 
-        const hrv = recharge. heart_rate_variability_avg ??  null;
+        const hrv = recharge. heart_rate_variability_avg ?? null;
         const rhr = recharge.heart_rate_avg ?  Math.round(recharge.heart_rate_avg) : null;
 
         // ✅ Simple recovery score calculation
         let recoveryScore = null;
         if (hrv && rhr && hrv > 0 && rhr > 0) {
-          // HRV component (40%)
           const hrvRatio = Math.min(hrv / 30, 1.5);
           const hrvComponent = hrvRatio * 100 * 0.4;
 
-          // RHR component (20%) - inverted
           const rhrRatio = Math.min(60 / rhr, 1.3);
           const rhrComponent = rhrRatio * 100 * 0.2;
 
-          // Sleep component (30%) - default to 70
           const sleepComponent = 70 * 0.3;
 
-          // Prior strain component (10%) - default to 5
           const strainComponent = ((21 - 5) / 21) * 100 * 0.1;
 
           recoveryScore = Math.round(
@@ -351,37 +346,35 @@ async function syncNightlyRecharge(
           );
         }
 
-        const dailyMetric = {
-          user_id: userId,
-          metric_date: date,
-          recovery_score: recoveryScore,
-          hrv: hrv,
-          resting_hr: rhr,
-          nightly_recharge_status: recharge.nightly_recharge_status ??  null,
-          ans_charge: recharge.ans_charge ?? null,
-          breathing_rate_avg: recharge. breathing_rate_avg ?? null,
-          updated_at: new Date().toISOString(),
-        };
+        console.log(`[syncNightlyRecharge] Updating metric for ${date}:  recovery_score=${recoveryScore}, HRV=${hrv}, RHR=${rhr}`);
 
-        console.log(`[syncNightlyRecharge] Upserting ${date} with recovery_score=${recoveryScore}`);
-
+        // ✅ FIXED: Use UPDATE instead of UPSERT
         const { error } = await supabase
           .from("daily_metrics")
-          .upsert([dailyMetric])
-          .select();
+          .update({
+            recovery_score: recoveryScore,
+            hrv: hrv,
+            resting_hr: rhr,
+            nightly_recharge_status: recharge.nightly_recharge_status ?? null,
+            ans_charge: recharge.ans_charge ?? null,
+            breathing_rate_avg: recharge.breathing_rate_avg ??  null,
+            updated_at:  new Date().toISOString(),
+          })
+          .eq("user_id", userId)
+          .eq("metric_date", date);
 
         if (error) {
-          console.error(`[syncNightlyRecharge] Insert error:  ${JSON.stringify(error)}`);
+          console.error(`[syncNightlyRecharge] Update error:  ${JSON.stringify(error)}`);
         } else {
           synced++;
-          console.log(`[syncNightlyRecharge] Inserted ${date}, synced count=${synced}`);
+          console.log(`[syncNightlyRecharge] Updated ${date}, synced count=${synced}`);
         }
       } catch (e) {
         console.error(`[syncNightlyRecharge] Exception:  ${e}`);
       }
     }
 
-    console.log(`[syncNightlyRecharge] Completed:  synced ${synced} records`);
+    console. log(`[syncNightlyRecharge] Completed:  synced ${synced} records`);
     return synced;
   } catch (e) {
     console.error(`[syncNightlyRecharge] Fatal:  ${e}`);
