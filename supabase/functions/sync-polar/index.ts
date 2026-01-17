@@ -127,70 +127,95 @@ async function syncExercises(
   polarUserId: number,
   accessToken: string,
 ): Promise<number> {
-  const tx = await fetchJsonOrThrow<any>(
-    `https://www.polaraccesslink.com/v3/users/${polarUserId}/exercise-transactions`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      },
-    },
-    "Polar exercise transaction create",
-  );
-
-  if (!tx) return 0;
-
-  const resourceUri = tx?.["resource-uri"];
-  if (!resourceUri || typeof resourceUri !== "string") {
-    throw new Error("Polar exercise transaction create: missing resource-uri");
-  }
-
-  const exercises = await fetchJsonOrThrow<any>(
-    resourceUri,
-    { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
-    "Polar exercise transaction list",
-  );
-
-  const list: string[] = exercises?.exercises ?? [];
-  let synced = 0;
-
-  for (const exerciseUrl of list) {
-    const exercise = await fetchJsonOrThrow<any>(
-      exerciseUrl,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
-      "Polar exercise fetch",
-    );
-
-    // In the syncExercises function, fix the mapping: 
-    await supabase. from("workouts").upsert(
+  try {
+    console.log('[syncExercises] Starting exercise sync');
+    
+    const tx = await fetchJsonOrThrow<any>(
+      `https://www.polaraccesslink.com/v3/users/${polarUserId}/exercise-transactions`,
       {
-        user_id: userId,
-        polar_exercise_id: exercise?. id,
-        workout_date: String(exercise?.["start-time"] ??  "").split("T")[0] || null,
-        workout_type: exercise?.sport || "workout",
-        // ✅ FIX: Calculate duration in SECONDS (not seconds converted to minutes)
-        duration_minutes: Math.round(((exercise?.duration?. seconds ?? 0) as number) / 60),
-        calories:  exercise?.calories ?? null,
-        avg_hr: exercise?.["heart-rate"]?.average ?? null,
-        max_hr: exercise?.["heart-rate"]?.maximum ?? null,
-        // ✅ ADD: Calculate strain_score if available
-        strain_score: exercise?.training_load ??  null,
-        raw_data: exercise,
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
       },
-      { onConflict: "user_id,polar_exercise_id" },
+      "Polar exercise transaction create",
     );
 
-    synced++;
+    if (! tx) {
+      console.log('[syncExercises] No transaction returned');
+      return 0;
+    }
+
+    const resourceUri = tx?. ["resource-uri"];
+    if (!resourceUri || typeof resourceUri !== "string") {
+      throw new Error("Polar exercise transaction:  missing resource-uri");
+    }
+
+    const exercises = await fetchJsonOrThrow<any>(
+      resourceUri,
+      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
+      "Polar exercise transaction list",
+    );
+
+    const list:  string[] = exercises?.exercises ??  [];
+    console.log('[syncExercises] Found exercises:', list.length);
+    let synced = 0;
+
+    for (const exerciseUrl of list) {
+      try {
+        // ✅ Fetch FULL exercise details (includes duration and training_load)
+        const exercise = await fetchJsonOrThrow<any>(
+          exerciseUrl,
+          { headers: { Authorization:  `Bearer ${accessToken}`, Accept: "application/json" } },
+          "Polar exercise fetch",
+        );
+
+        console.log('[syncExercises] Exercise:', {
+          id: exercise?. id,
+          duration: exercise?.duration?. seconds,
+          training_load: exercise?. training_load,
+        });
+
+        // Extract duration in seconds
+        const durationSeconds = exercise?.duration?.seconds ?? 0;
+        const durationMinutes = Math.round(durationSeconds / 60);
+
+        await supabase. from("workouts").upsert(
+          {
+            user_id: userId,
+            polar_exercise_id: exercise?.id,
+            workout_date: String(exercise?.["start-time"] ?? "").split("T")[0] || null,
+            workout_type: exercise?.sport || "workout",
+            duration_minutes: durationMinutes,  // ✅ FROM duration. seconds
+            calories:  exercise?.calories ?? null,
+            avg_hr: exercise?.["heart-rate"]?.average ?? null,
+            max_hr: exercise?.["heart-rate"]?.maximum ?? null,
+            strain_score: exercise?.training_load ??  null,  // ✅ FROM training_load
+            raw_data: exercise,
+          },
+          { onConflict: "user_id,polar_exercise_id" },
+        );
+
+        synced++;
+        console.log('[syncExercises] Synced:', exercise?.id, 'duration:', durationMinutes, 'training_load:', exercise?.training_load);
+      } catch (e) {
+        console.error('[syncExercises] Error processing exercise:', e);
+      }
+    }
+
+    await fetchJsonOrThrow<any>(
+      resourceUri,
+      { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` } },
+      "Polar exercise transaction commit",
+    );
+
+    console.log('[syncExercises] Completed, synced:', synced);
+    return synced;
+  } catch (e) {
+    console.error('[syncExercises] Fatal error:', e);
+    return 0;
   }
-
-  await fetchJsonOrThrow<any>(
-    resourceUri,
-    { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` } },
-    "Polar exercise transaction commit",
-  );
-
-  return synced;
 }
 
 // Sleep sync with duration calculation
