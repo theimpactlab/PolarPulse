@@ -19,18 +19,19 @@ export interface Workout {
 
 export interface SleepSession {
   id: string;
-  polarId?: string;
+  polarId?:  string;
   date: string;
-  sleepStart?: string;
-  sleepEnd?: string;
+  sleepStart?:  string;
+  sleepEnd?:  string;
   totalSleepMinutes: number;
   timeInBedMinutes: number;
   stages: {
     awake: number;
-    light: number;
+    light:  number;
     deep: number;
     rem: number;
   };
+  sleep_score?: number;  // ✅ ADD THIS
   source: 'polar' | 'apple_health' | 'manual' | 'demo';
 }
 
