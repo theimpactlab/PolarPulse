@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { polarOAuthService } from '@/lib/services/polar-oauth';
+import { calculateRecoveryScore } from '@/lib/utils/scoring';
 
 export interface Workout {
   id: string;
@@ -36,10 +37,11 @@ export interface SleepSession {
 
 export interface DailyMetrics {
   date: string;
-  recoveryScore?:  number;
-  strainScore?: number;
-  sleepScore?: number;
-  bodyBattery?: number;
+  recoveryScore?  :   number;
+  strainScore? :   number;
+  sleepScore?:  number;
+  bodyBattery?:  number;
+  bodyTemperature?: number;  //
   trainingLoad?: number;
 }
 
@@ -208,28 +210,44 @@ export const useAppStore = create<AppState>()(
           source: "polar",
         }));
 
-        // ✅ Map recovery metrics from daily_metrics
-        const mappedDailyMetrics:  DailyMetrics[] = (pulled.dailyMetrics || []).map((m: any) => ({
-          date: m.metric_date,
-          recoveryScore: m.recovery_score ??  undefined,
-          strainScore:  m.strain_score ?? undefined,
-          sleepScore: m.sleep_score ?? undefined,
-          bodyBattery: m.body_battery ??  undefined,
-          trainingLoad: m.training_load ?? undefined,
-          hrv: m.hrv ?? undefined,
-          rhr: m. resting_hr ?? undefined,
-        }));
+        // ✅ FIXED: Calculate recovery score from HRV, RHR, and sleep
+        const mappedDailyMetrics:  DailyMetrics[] = (pulled.dailyMetrics || []).map((m:  any) => {
+          // Calculate recovery score
+          const hrv = m.hrv ??  undefined;
+          const rhr = m.resting_hr ?? undefined;
+          const sleepScore = m.sleep_score ?? 0;
+          
+          // Get prior day strain (need to find from workouts)
+          const currentDate = new Date(m.metric_date);
+          const prevDate = new Date(currentDate.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          const prevWorkouts = pulled.workouts?. filter((w: any) => w.workout_date === prevDate) || [];
+          const priorDayStrain = prevWorkouts.length > 0
+            ? prevWorkouts.reduce((sum, w:  any) => sum + (w.strain_score || 0), 0)
+            : 0;
 
-        set({
-          workouts: mappedWorkouts,
-          sleepSessions: mappedSleeps,
-          dailyMetrics: mappedDailyMetrics,
-          lastSyncDate: new Date().toISOString(),
-          isDemoMode: false,
+          // Calculate recovery using the scoring function
+          let recoveryScore = 0;
+          if (hrv && rhr) {
+            // Use baselines from Polar (or reasonable defaults)
+            const hrvBaseline = 30; // Default HRV baseline in ms
+            const rhrBaseline = 60; // Default RHR baseline in bpm
+            
+            const { score } = calculateRecoveryScore(hrv, hrvBaseline, rhr, rhrBaseline, sleepScore, priorDayStrain);
+            recoveryScore = score;
+          }
+
+          return {
+            date: m.metric_date,
+            recoveryScore:   recoveryScore || undefined,
+            strainScore:  m.strain_score ??  undefined,
+            sleepScore: m.sleep_score ?? undefined,
+            bodyBattery: m.body_battery ??  undefined,
+            bodyTemperature: m.body_temperature_celsius ?? undefined,  // ✅ ADD THIS
+            trainingLoad: m.training_load ?? undefined,
+            hrv:   hrv,
+            rhr:  rhr,
+          };
         });
-
-        return { success: true, synced: result.synced ??  0 };
-      },
 
       // Apple Health actions
       checkAppleHealthAvailability: () => {
