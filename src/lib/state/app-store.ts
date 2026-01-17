@@ -186,19 +186,28 @@ export const useAppStore = create<AppState>()(
             };
           }
 
-          // ✅ Map workouts
-          const mappedWorkouts:  Workout[] = (pulled.workouts || []).map((w:  any) => ({
-            id: `polar_${w.polar_exercise_id}`,
-            polarId: w.polar_exercise_id,
-            date: w.workout_date,
-            type: w.workout_type || 'workout',
-            durationMinutes: w.duration_minutes || 0,
-            calories: w.calories || 0,
-            avgHR: w.avg_hr || 0,
-            maxHR: w.max_hr || 0,
-            strainScore: w.strain_score ??  undefined,
-            source: 'polar' as const,
-          }));
+          // ✅ Map workouts with fallback calculations
+          const mappedWorkouts:  Workout[] = (pulled. workouts || []).map((w: any) => {
+            // ✅ If strain_score is missing, calculate from duration + intensity
+            let strainScore = w.strain_score ??  undefined;
+            if (!strainScore && w.duration_minutes) {
+              // Simple fallback: 1 strain per 10 minutes of activity
+              strainScore = Math.min(21, w.duration_minutes / 10);
+            }
+
+            return {
+              id: `polar_${w.polar_exercise_id}`,
+              polarId: w.polar_exercise_id,
+              date: w.workout_date,
+              type: w.workout_type || 'workout',
+              durationMinutes: w.duration_minutes || 0,
+              calories: w.calories || 0,
+              avgHR: w.avg_hr || 0,
+              maxHR: w.max_hr || 0,
+              strainScore: strainScore,
+              source: 'polar' as const,
+            };
+          });
 
           // ✅ Map sleep sessions
           const mappedSleeps: SleepSession[] = (pulled. sleepSessions || []).map((s: any) => ({
@@ -284,6 +293,8 @@ export const useAppStore = create<AppState>()(
 
           console.log('[syncData] Mapped metrics count:', mappedDailyMetrics.length);
           console.log('[syncData] First metric:', mappedDailyMetrics[0]);
+          console.log('[syncData] Mapped workouts:', mappedWorkouts. slice(0, 2));
+          console.log('[syncData] First workout strain:', mappedWorkouts[0]?.strainScore);
           
           set({
             workouts: mappedWorkouts,

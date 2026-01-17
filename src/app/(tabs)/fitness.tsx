@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Activity, Flame, Clock, Heart, ChevronRight } from 'lucide-react-native';
-import { useAppStore, type Workout, type DailyMetrics, type HRZone, type TrainingLoadHistory } from '@/lib/state/app-store';
+import { useAppStore, type Workout, type DailyMetrics, type TrainingLoadHistory } from '@/lib/state/app-store';
 import { formatDuration, formatDate, getDayOfWeek } from '@/lib/utils/format';
 import { TrendChart } from '@/components/TrendChart';
 import { TrainingLoadCard } from '@/components/TrainingLoadCard';
@@ -17,14 +17,17 @@ export default function FitnessScreen() {
   const workouts = useAppStore((s): Workout[] => s.workouts);
   const dailyMetrics = useAppStore((s): DailyMetrics[] => s.dailyMetrics);
   const trainingLoadHistory = useAppStore((s): TrainingLoadHistory[] => s.trainingLoadHistory);
-  const baselines = useAppStore((s) => s.baselines);
+
+  console.log('[FitnessScreen] workouts:', workouts);
+  console.log('[FitnessScreen] trainingLoadHistory:', trainingLoadHistory);
+  console.log('[FitnessScreen] dailyMetrics:', dailyMetrics);
 
   // Get today's metrics
   const today = new Date().toISOString().split('T')[0];
-  const todayMetrics = dailyMetrics.find((m: DailyMetrics) => m.date === today);
+  const todayMetrics = dailyMetrics.find((m:  DailyMetrics) => m.date === today);
   const todayLoadHistory = trainingLoadHistory.find((t) => t.date === today);
 
-  // Show all workouts (no tier limit)
+  // Show all workouts sorted by date
   const recentWorkouts = workouts
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -32,11 +35,13 @@ export default function FitnessScreen() {
   const weeklyStats = React.useMemo(() => {
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const thisWeek = workouts.filter((w: Workout) => new Date(w.date) >= weekAgo);
+    const thisWeek = workouts.filter((w:  Workout) => new Date(w.date) >= weekAgo);
+
+    console.log('[FitnessScreen] thisWeek workouts:', thisWeek);
 
     return {
-      totalMinutes: thisWeek.reduce((sum: number, w: Workout) => sum + w.durationMinutes, 0),
-      totalCalories: thisWeek.reduce((sum: number, w: Workout) => sum + w.calories, 0),
+      totalMinutes: thisWeek.reduce((sum:  number, w: Workout) => sum + (w. durationMinutes || 0), 0),
+      totalCalories: thisWeek.reduce((sum: number, w: Workout) => sum + (w.calories || 0), 0),
       sessionCount: thisWeek.length,
       avgStrain: thisWeek.length > 0
         ? thisWeek.reduce((sum: number, w: Workout) => sum + (w.strainScore || 0), 0) / thisWeek.length
@@ -52,9 +57,17 @@ export default function FitnessScreen() {
       const date = new Date(now.getTime() - (days - 1 - i) * 24 * 60 * 60 * 1000);
       const dateStr = date.toISOString().split('T')[0];
       const metrics = dailyMetrics.find((m: DailyMetrics) => m.date === dateStr);
+      
+      // Calculate strain from workouts for this date if metrics don't have it
+      let strainValue = metrics?.strainScore || 0;
+      if (!strainValue) {
+        const dayWorkouts = workouts.filter((w: Workout) => w.date === dateStr);
+        strainValue = dayWorkouts.reduce((sum, w) => sum + (w.strainScore || 0), 0);
+      }
+
       return {
-        date: dateStr,
-        value: metrics?.strainScore || 0,
+        date:  dateStr,
+        value: strainValue,
       };
     });
   };
@@ -83,7 +96,9 @@ export default function FitnessScreen() {
                 <Text className="text-textMuted text-xs ml-1">Time</Text>
               </View>
               <Text className="text-textPrimary text-xl font-bold">
-                {Math.floor(weeklyStats.totalMinutes / 60)}h {weeklyStats.totalMinutes % 60}m
+                {weeklyStats.totalMinutes > 0 
+                  ? `${Math.floor(weeklyStats.totalMinutes / 60)}h ${weeklyStats.totalMinutes % 60}m`
+                  : '0h 0m'}
               </Text>
             </View>
             <View className="w-px bg-border" />
@@ -93,7 +108,7 @@ export default function FitnessScreen() {
                 <Text className="text-textMuted text-xs ml-1">Calories</Text>
               </View>
               <Text className="text-textPrimary text-xl font-bold">
-                {weeklyStats.totalCalories.toLocaleString()}
+                {weeklyStats.totalCalories. toLocaleString()}
               </Text>
             </View>
             <View className="w-px bg-border" />
@@ -108,50 +123,53 @@ export default function FitnessScreen() {
         </View>
 
         {/* Training Load & VO2 Max Cards */}
-        <View className="mx-5 mt-4 space-y-3">
-          {/* Training Load Card */}
-          <TrainingLoadCard
-            acuteLoad={todayLoadHistory?.acuteLoad ?? 0}
-            chronicLoad={todayLoadHistory?.chronicLoad ?? 0}
-            status={todayMetrics?.trainingLoadStatus ?? 'maintaining'}
-            history={trainingLoadHistory}
-          />
+        {trainingLoadHistory.length > 0 && todayLoadHistory && (
+          <View className="mx-5 mt-4 space-y-3">
+            {/* Training Load Card */}
+            <TrainingLoadCard
+              acuteLoad={todayLoadHistory?. acuteLoad ??  0}
+              chronicLoad={todayLoadHistory?.chronicLoad ?? 0}
+              status={todayLoadHistory?.status ??  'maintaining'}
+              history={trainingLoadHistory}
+            />
 
-          {/* VO2 Max Card */}
-          <VO2MaxCard
-            value={todayMetrics?.vo2Max ?? 0}
-            baseline={baselines?.vo2MaxBaseline}
-          />
-        </View>
+            {/* VO2 Max Card */}
+            <VO2MaxCard
+              value={todayMetrics?.vo2Max ?? 0}
+            />
+          </View>
+        )}
 
         {/* Strain Trend */}
-        <View className="mx-5 mt-4 bg-surface rounded-2xl p-5">
-          <View className="flex-row justify-between items-center mb-4">
-            <Text className="text-textPrimary text-lg font-semibold">Strain Trend</Text>
-            <View className="flex-row bg-surfaceLight rounded-lg p-1">
-              {(['7d', '30d', '90d'] as TimeRange[]).map((range) => {
-                const isSelected = timeRange === range;
-                return (
-                  <Pressable
-                    key={range}
-                    onPress={() => setTimeRange(range)}
-                    className={`px-3 py-1.5 rounded-md ${isSelected ? 'bg-primary' : ''}`}
-                  >
-                    <Text className={`text-xs font-semibold ${isSelected ? 'text-background' : 'text-textMuted'}`}>
-                      {range}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+        {getTrendData(timeRange).some(d => d.value > 0) && (
+          <View className="mx-5 mt-4 bg-surface rounded-2xl p-5">
+            <View className="flex-row justify-between items-center mb-4">
+              <Text className="text-textPrimary text-lg font-semibold">Strain Trend</Text>
+              <View className="flex-row bg-surfaceLight rounded-lg p-1">
+                {(['7d', '30d', '90d'] as TimeRange[]).map((range) => {
+                  const isSelected = timeRange === range;
+                  return (
+                    <Pressable
+                      key={range}
+                      onPress={() => setTimeRange(range)}
+                      className={`px-3 py-1.5 rounded-md ${isSelected ? 'bg-primary' : ''}`}
+                    >
+                      <Text className={`text-xs font-semibold ${isSelected ? 'text-background' : 'text-textMuted'}`}>
+                        {range}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
+            <TrendChart
+              data={getTrendData(timeRange)}
+              color="#8B5CF6"
+              height={120}
+              showLabels
+            />
           </View>
-          <TrendChart
-            data={getTrendData(timeRange)}
-            color="#8B5CF6"
-            height={120}
-            showLabels
-          />
-        </View>
+        )}
 
         {/* Recent Activities */}
         <View className="mt-6 px-5">
@@ -166,7 +184,7 @@ export default function FitnessScreen() {
             </Text>
           </View>
         ) : (
-          <View className="px-5">
+          <View className="px-5 mb-8">
             {recentWorkouts.map((workout: Workout) => (
               <Pressable
                 key={workout.id}
@@ -194,41 +212,26 @@ export default function FitnessScreen() {
                       <View className="flex-row items-center mr-4">
                         <Clock size={14} color="#6B7280" />
                         <Text className="text-textSecondary text-sm ml-1">
-                          {formatDuration(workout.durationMinutes)}
+                          {workout. durationMinutes > 0 ? formatDuration(workout.durationMinutes) : '0m'}
                         </Text>
                       </View>
                       <View className="flex-row items-center mr-4">
                         <Flame size={14} color="#6B7280" />
                         <Text className="text-textSecondary text-sm ml-1">
-                          {workout.calories} cal
+                          {workout.calories || 0} cal
                         </Text>
                       </View>
                       <View className="flex-row items-center">
                         <Heart size={14} color="#6B7280" />
                         <Text className="text-textSecondary text-sm ml-1">
-                          {workout.avgHR} bpm
+                          {workout.avgHR || 0} bpm
                         </Text>
                       </View>
                     </View>
-
-                    {/* HR Zones bar */}
-                    {workout.hrZones && (
-                      <View className="flex-row h-2 rounded-full overflow-hidden mt-3">
-                        {workout.hrZones.map((zone: HRZone, zIndex: number) => (
-                          <View
-                            key={zIndex}
-                            style={{
-                              flex: zone.minutes,
-                              backgroundColor: getZoneColor(zone.zone),
-                            }}
-                          />
-                        ))}
-                      </View>
-                    )}
                   </View>
 
                   <View className="items-end">
-                    {workout.strainScore !== undefined && (
+                    {workout.strainScore !== undefined && workout.strainScore > 0 && (
                       <View className="bg-accent/20 px-2 py-1 rounded-lg">
                         <Text className="text-accent text-sm font-bold">
                           {workout.strainScore.toFixed(1)}
@@ -242,8 +245,6 @@ export default function FitnessScreen() {
             ))}
           </View>
         )}
-
-        <View className="h-8" />
       </ScrollView>
     </SafeAreaView>
   );
