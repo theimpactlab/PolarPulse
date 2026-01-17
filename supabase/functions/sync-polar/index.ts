@@ -162,16 +162,20 @@ async function syncExercises(
       "Polar exercise fetch",
     );
 
-    await supabase.from("workouts").upsert(
+    // In the syncExercises function, fix the mapping: 
+    await supabase. from("workouts").upsert(
       {
         user_id: userId,
-        polar_exercise_id: exercise?.id,
-        workout_date: String(exercise?.["start-time"] ?? "").split("T")[0] || null,
+        polar_exercise_id: exercise?. id,
+        workout_date: String(exercise?.["start-time"] ??  "").split("T")[0] || null,
         workout_type: exercise?.sport || "workout",
-        duration_minutes: Math.round(((exercise?.duration?.seconds ?? 0) as number) / 60),
-        calories: exercise?.calories ?? null,
+        // ✅ FIX: Calculate duration in SECONDS (not seconds converted to minutes)
+        duration_minutes: Math.round(((exercise?.duration?. seconds ?? 0) as number) / 60),
+        calories:  exercise?.calories ?? null,
         avg_hr: exercise?.["heart-rate"]?.average ?? null,
         max_hr: exercise?.["heart-rate"]?.maximum ?? null,
+        // ✅ ADD: Calculate strain_score if available
+        strain_score: exercise?.training_load ??  null,
         raw_data: exercise,
       },
       { onConflict: "user_id,polar_exercise_id" },

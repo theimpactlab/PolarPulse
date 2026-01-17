@@ -186,28 +186,43 @@ export const useAppStore = create<AppState>()(
             };
           }
 
-          // ✅ Map workouts with fallback calculations
-          const mappedWorkouts:  Workout[] = (pulled. workouts || []).map((w: any) => {
-            // ✅ If strain_score is missing, calculate from duration + intensity
+          // ✅ Map workouts with raw_data fallback
+          const mappedWorkouts:  Workout[] = (pulled.workouts || []).map((w:  any) => {
+            // Try to get duration from multiple sources
+            let durationMinutes = w.duration_minutes || 0;
+            
+            // Fallback: try to parse from raw_data
+            if (durationMinutes === 0 && w.raw_data?. duration?. seconds) {
+              durationMinutes = Math.round((w.raw_data.duration. seconds) / 60);
+            }
+            
+            // Fallback: try to parse from raw_data. duration (if it's just a number)
+            if (durationMinutes === 0 && typeof w.raw_data?.duration === 'number') {
+              durationMinutes = Math.round(w.raw_data.duration / 60);
+            }
+
+            // Calculate strain if not available
             let strainScore = w.strain_score ??  undefined;
-            if (!strainScore && w.duration_minutes) {
-              // Simple fallback: 1 strain per 10 minutes of activity
-              strainScore = Math.min(21, w.duration_minutes / 10);
+            if (! strainScore && durationMinutes > 0) {
+              // Estimate:  1 strain per 10 minutes
+              strainScore = Math.min(21, durationMinutes / 10);
             }
 
             return {
               id: `polar_${w.polar_exercise_id}`,
               polarId: w.polar_exercise_id,
-              date: w.workout_date,
-              type: w.workout_type || 'workout',
-              durationMinutes: w.duration_minutes || 0,
+              date: w. workout_date,
+              type:  w.workout_type || 'workout',
+              durationMinutes:  durationMinutes,
               calories: w.calories || 0,
               avgHR: w.avg_hr || 0,
               maxHR: w.max_hr || 0,
-              strainScore: strainScore,
+              strainScore:  strainScore,
               source: 'polar' as const,
             };
           });
+
+          console.log('[syncData] Sample workout durations:', mappedWorkouts.slice(0, 2).map(w => ({ date: w.date, duration: w.durationMinutes, strain: w.strainScore })));
 
           // ✅ Map sleep sessions
           const mappedSleeps: SleepSession[] = (pulled. sleepSessions || []).map((s: any) => ({
