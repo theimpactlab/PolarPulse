@@ -288,11 +288,11 @@ async function syncSleep(
   }
 }
 
-// Remove raw_data column for daily_metrics
+// ✅ UPDATED: Calculate recovery score before inserting
 async function syncNightlyRecharge(
   supabase: any,
   userId: string,
-  accessToken: string,
+  accessToken: string
 ): Promise<number> {
   try {
     console.log(`[syncNightlyRecharge] Starting for user ${userId}`);
@@ -307,34 +307,61 @@ async function syncNightlyRecharge(
           Accept: "application/json",
         },
       },
-      "Polar nightly recharge fetch",
+      "Polar nightly recharge fetch"
     );
 
-    const rechargeList: any[] = rechargeResponse?.recharges || [];
+    const rechargeList:  any[] = rechargeResponse?. recharges || [];
     console.log(`[syncNightlyRecharge] Found ${rechargeList.length} recharge records`);
 
     if (rechargeList.length === 0) return 0;
+
+    // Get all sleep sessions to calculate sleep scores
+    const { data: allSleep } = await supabase
+      . from("sleep_sessions")
+      .select("sleep_date, duration_minutes")
+      .eq("user_id", userId);
 
     let synced = 0;
 
     for (const recharge of rechargeList) {
       try {
-        const date = recharge?.date;
+        const date = recharge?. date;
         if (!date) continue;
 
+        const hrv = recharge. heart_rate_variability_avg ??  null;
+        const rhr = recharge.heart_rate_avg ?  Math.round(recharge.heart_rate_avg) : null;
+
+        // Find sleep score for this date
+        const sleepForDate = (allSleep || []).find((s: any) => s.sleep_date === date);
+        const sleepScore = sleepForDate
+          ?  Math.round((sleepForDate.duration_minutes / (8 * 60)) * 100)
+          : 0;
+
+        // Simple recovery score:  (HRV/30) * 40 + (60/RHR) * 20 + sleepScore * 30 + 10
+        let recoveryScore = 0;
+        if (hrv && rhr) {
+          const hrvComponent = Math.min((hrv / 30) * 40, 40);
+          const rhrComponent = Math.min((60 / rhr) * 20, 20);
+          const sleepComponent = sleepScore * 0.3;
+          recoveryScore = Math.round(hrvComponent + rhrComponent + sleepComponent + 10);
+        }
+
+        recoveryScore = Math.min(100, Math.max(0, recoveryScore));
+
         const dailyMetric = {
-          user_id: userId,
-          metric_date: date,
-          hrv: recharge?.heart_rate_variability_avg ?? null,
-          resting_hr: recharge?.heart_rate_avg ? Math.round(recharge.heart_rate_avg) : null,
-          nightly_recharge_status: recharge?.nightly_recharge_status ?? null,
-          ans_charge: recharge?.ans_charge ?? null,
-          breathing_rate_avg: recharge?.breathing_rate_avg ?? null,
+          user_id:  userId,
+          metric_date:  date,
+          recovery_score:  recoveryScore || null,
+          hrv: hrv,
+          resting_hr: rhr,
+          nightly_recharge_status: recharge.nightly_recharge_status ??  null,
+          ans_charge: recharge.ans_charge ?? null,
+          breathing_rate_avg:  recharge.breathing_rate_avg ?? null,
           updated_at: new Date().toISOString(),
         };
 
         console.log(
-          `[syncNightlyRecharge] Upserting metric for ${date}: HRV=${dailyMetric.hrv}, RHR=${dailyMetric.resting_hr}`,
+          `[syncNightlyRecharge] Inserting metric for ${date}:  recovery_score=${recoveryScore}, HRV=${hrv}, RHR=${rhr}`
         );
 
         const { error } = await supabase
@@ -343,20 +370,20 @@ async function syncNightlyRecharge(
           .select();
 
         if (error) {
-          console.error(`[syncNightlyRecharge] Upsert error: ${JSON.stringify(error)}`);
+          console.error(`[syncNightlyRecharge] Insert error:  ${JSON.stringify(error)}`);
         } else {
           synced++;
-          console.log(`[syncNightlyRecharge] Upserted ${date}, count=${synced}`);
+          console.log(`[syncNightlyRecharge] Inserted ${date}, count=${synced}`);
         }
       } catch (e) {
-        console.error(`[syncNightlyRecharge] Exception: ${e}`);
+        console.error(`[syncNightlyRecharge] Exception:  ${e}`);
       }
     }
 
-    console.log(`[syncNightlyRecharge] Completed: synced ${synced} records`);
+    console.log(`[syncNightlyRecharge] Completed:  synced ${synced} records`);
     return synced;
   } catch (e) {
-    console.error(`[syncNightlyRecharge] Fatal: ${e}`);
+    console.error(`[syncNightlyRecharge] Fatal:  ${e}`);
     return 0;
   }
 }
@@ -591,10 +618,6 @@ Deno.serve(async (req) => {
       const bodyBatterySynced = await syncBodyBattery(supabase, bodyUserId, accessToken);
       console.log(`[sync-polar] Body battery synced: ${bodyBatterySynced}`);
 
-      console.log(`[sync-polar] Calling syncBodyBattery`);
-      const bodyBatterySynced = await syncBodyBattery(supabase, bodyUserId, accessToken);
-      console.log(`[sync-polar] Body battery synced: ${bodyBatterySynced}`);
-
       console.log(`[sync-polar] Calling syncSkinTemperature`);
       const tempSynced = await syncSkinTemperature(supabase, bodyUserId, accessToken);
       console.log(`[sync-polar] Skin temperature synced: ${tempSynced}`);
@@ -602,7 +625,7 @@ Deno.serve(async (req) => {
       results. push({ 
         user_id: bodyUserId, 
         success: true, 
-        synced:   exercisesSynced + sleepSynced + rechargeSync + bodyBatterySynced + tempSynced 
+        synced:   exercisesSynced + sleepSynced + rechargeSynced + bodyBatterySynced + tempSynced 
       });
 
     } catch (e) {
