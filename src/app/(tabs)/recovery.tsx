@@ -18,20 +18,20 @@ export default function RecoveryScreen() {
 
   // ✅ FIXED: Get the most recent metric (yesterday if today has no data)
   const todayMetrics = dailyMetrics.length > 0 
-    ? dailyMetrics[dailyMetrics.length - 1]  // Get most recent
+    ? dailyMetrics[dailyMetrics.length - 1]
     : null;
 
-  const recoveryScore = todayMetrics? .  recoveryScore ??  0;  
-  const hrv = todayMetrics?. hrv ?? 0;  
-  const rhr = todayMetrics? . rhr ?? 0;  
-  const sleepScore = todayMetrics?.sleepScore ??  0;  
+  const recoveryScore = todayMetrics?. recoveryScore ?? 0;  
+  const hrv = todayMetrics?.hrv ?? 0;  
+  const rhr = todayMetrics?.rhr ??  0;  
+  const sleepScore = todayMetrics?. sleepScore ?? 0;  
   const bodyBattery = todayMetrics?.bodyBattery ?? 0;
 
   console.log('[RecoveryScreen] todayMetrics:', todayMetrics);
   console.log('[RecoveryScreen] recoveryScore:', recoveryScore);
 
   // Calculate deltas from 7-day average
-  const last7Days = dailyMetrics.slice(-7);
+  const last7Days = dailyMetrics. slice(-7);
   const avgHRV = last7Days.length > 0 ? last7Days.reduce((sum, m) => sum + (m.hrv || 0), 0) / last7Days.length : hrv;
   const avgRHR = last7Days.length > 0 ? last7Days. reduce((sum, m) => sum + (m.rhr || 0), 0) / last7Days.length : rhr;
 
@@ -47,7 +47,7 @@ export default function RecoveryScreen() {
         if (metric === 'recovery') {
           return { date: m.date, value: m.recoveryScore ??  0 };
         } else if (metric === 'hrv') {
-          return { date:  m.date, value: m.  hrv ?? 0 };
+          return { date:  m.date, value: m. hrv ?? 0 };
         } else {
           return { date: m. date, value: m.rhr ?? 0 };
         }
@@ -177,7 +177,7 @@ export default function RecoveryScreen() {
                 className={`flex-1 py-2 rounded-lg ${selectedMetric === metric ? 'bg-surfaceLight' : ''}`}
               >
                 <Text className={`text-center text-sm font-medium ${selectedMetric === metric ? 'text-textPrimary' : 'text-textMuted'}`}>
-                  {metric === 'recovery' ? 'Recovery' : metric === 'hrv' ? 'HRV' :  'RHR'}
+                  {metric === 'recovery' ? 'Recovery' : metric === 'hrv' ? 'HRV' : 'RHR'}
                 </Text>
               </Pressable>
             ))}
@@ -189,7 +189,7 @@ export default function RecoveryScreen() {
           <View className="mx-5 mt-4 bg-surface rounded-2xl p-5">
             <TrendChart
               data={trendData}
-              color={selectedMetric === 'recovery' ?  '#00D1A7' : selectedMetric === 'hrv' ? '#3B82F6' : '#FF6B35'}
+              color={selectedMetric === 'recovery' ?  '#00D1A7' :  selectedMetric === 'hrv' ? '#3B82F6' : '#FF6B35'}
               height={140}
               showLabels
             />
@@ -198,7 +198,7 @@ export default function RecoveryScreen() {
 
         {dailyMetrics.length === 0 && (
           <View className="mx-5 mt-4 bg-surface rounded-2xl p-6 items-center">
-            <Text className="text-textMuted text-center">No metrics available.  Sync your Polar data. </Text>
+            <Text className="text-textMuted text-center">No metrics available. Sync your Polar data. </Text>
           </View>
         )}
 
