@@ -1,4 +1,4 @@
-// Supabase Edge Function: sync-polar
+// Supabase Edge Function:  sync-polar
 // Deploy with: supabase functions deploy sync-polar
 //
 // Deno runtime
@@ -7,7 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
+  "Access-Control-Allow-Headers": 
     "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST,OPTIONS",
 };
@@ -23,18 +23,18 @@ async function readTextSafe(res: Response): Promise<string> {
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ... corsHeaders, "Content-Type":  "application/json" },
   });
 }
 
 function isJsonContentType(res: Response): boolean {
-  const ct = res.headers.get("content-type") ?? "";
+  const ct = res.headers.get("content-type") ??  "";
   return ct.toLowerCase().includes("application/json");
 }
 
 async function fetchJsonOrThrow<T>(
   url: string,
-  init: RequestInit,
+  init:  RequestInit,
   label: string,
 ): Promise<T> {
   const res = await fetch(url, init);
@@ -48,7 +48,7 @@ async function fetchJsonOrThrow<T>(
 
   if (!res.ok) {
     throw new Error(
-      `${label} failed: HTTP ${res.status}. Body: ${bodyText || "<empty>"}`,
+      `${label} failed:  HTTP ${res.status}.  Body: ${bodyText || "<empty>"}`,
     );
   }
 
@@ -61,7 +61,7 @@ async function fetchJsonOrThrow<T>(
     return JSON.parse(bodyText) as T;
   } catch {
     throw new Error(
-      `${label} failed: response said JSON but was not parseable. Body: ${bodyText}`,
+      `${label} failed: response said JSON but was not parseable.  Body: ${bodyText}`,
     );
   }
 }
@@ -82,7 +82,7 @@ async function refreshTokenIfNeeded(
   }
 
   const res = await fetch("https://polarremote.com/v2/oauth2/token", {
-    method: "POST",
+    method:  "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
@@ -94,17 +94,17 @@ async function refreshTokenIfNeeded(
   });
 
   const text = await readTextSafe(res);
-  if (!res.ok) {
+  if (! res.ok) {
     throw new Error(
       `Token refresh failed: HTTP ${res.status}. Body: ${text || "<empty>"}`,
     );
   }
 
-  let newTokens: any;
+  let newTokens:  any;
   try {
     newTokens = JSON.parse(text);
   } catch {
-    throw new Error(`Token refresh failed: response not JSON. Body: ${text}`);
+    throw new Error(`Token refresh failed: response not JSON.  Body: ${text}`);
   }
 
   await supabase
@@ -121,108 +121,10 @@ async function refreshTokenIfNeeded(
   return newTokens.access_token;
 }
 
-async function syncExercises(
-  supabase: any,
-  userId: string,
-  polarUserId: number,
-  accessToken: string,
-): Promise<number> {
-  try {
-    console.log('[syncExercises] Starting exercise sync');
-    
-    const tx = await fetchJsonOrThrow<any>(
-      `https://www.polaraccesslink.com/v3/users/${polarUserId}/exercise-transactions`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/json",
-        },
-      },
-      "Polar exercise transaction create",
-    );
-
-    if (! tx) {
-      console.log('[syncExercises] No transaction returned');
-      return 0;
-    }
-
-    const resourceUri = tx?. ["resource-uri"];
-    if (!resourceUri || typeof resourceUri !== "string") {
-      throw new Error("Polar exercise transaction:  missing resource-uri");
-    }
-
-    const exercises = await fetchJsonOrThrow<any>(
-      resourceUri,
-      { headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" } },
-      "Polar exercise transaction list",
-    );
-
-    const list:  string[] = exercises?.exercises ??  [];
-    console.log('[syncExercises] Found exercises:', list.length);
-    let synced = 0;
-
-    for (const exerciseUrl of list) {
-      try {
-        // ✅ Fetch FULL exercise details (includes duration and training_load)
-        const exercise = await fetchJsonOrThrow<any>(
-          exerciseUrl,
-          { headers: { Authorization:  `Bearer ${accessToken}`, Accept: "application/json" } },
-          "Polar exercise fetch",
-        );
-
-        console.log('[syncExercises] Exercise:', {
-          id: exercise?. id,
-          duration: exercise?.duration?. seconds,
-          training_load: exercise?. training_load,
-        });
-
-        // Extract duration in seconds
-        const durationSeconds = exercise?.duration?.seconds ?? 0;
-        const durationMinutes = Math.round(durationSeconds / 60);
-
-        await supabase. from("workouts").upsert(
-          {
-            user_id: userId,
-            polar_exercise_id: exercise?.id,
-            workout_date: String(exercise?.["start-time"] ?? "").split("T")[0] || null,
-            workout_type: exercise?.sport || "workout",
-            duration_minutes: durationMinutes,  // ✅ FROM duration. seconds
-            calories:  exercise?.calories ?? null,
-            avg_hr: exercise?.["heart-rate"]?.average ?? null,
-            max_hr: exercise?.["heart-rate"]?.maximum ?? null,
-            strain_score: exercise?.training_load ??  null,  // ✅ FROM training_load
-            raw_data: exercise,
-          },
-          { onConflict: "user_id,polar_exercise_id" },
-        );
-
-        synced++;
-        console.log('[syncExercises] Synced:', exercise?.id, 'duration:', durationMinutes, 'training_load:', exercise?.training_load);
-      } catch (e) {
-        console.error('[syncExercises] Error processing exercise:', e);
-      }
-    }
-
-    await fetchJsonOrThrow<any>(
-      resourceUri,
-      { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` } },
-      "Polar exercise transaction commit",
-    );
-
-    console.log('[syncExercises] Completed, synced:', synced);
-    return synced;
-  } catch (e) {
-    console.error('[syncExercises] Fatal error:', e);
-    return 0;
-  }
-}
-
-// Sleep sync with duration calculation
 async function syncSleep(
   supabase: any,
   userId: string,
-  polarUserId: number, // kept for signature consistency, even if unused
+  polarUserId: number,
   accessToken: string,
 ): Promise<number> {
   try {
@@ -242,52 +144,52 @@ async function syncSleep(
       "Polar sleep fetch",
     );
 
-    console.log(`[syncSleep] Sleep response keys: ${Object.keys(sleepResponse ?? {})}`);
+    console.log(`[syncSleep] Sleep response keys: ${Object.keys(sleepResponse ??  {})}`);
 
     if (!sleepResponse) {
       console.log(`[syncSleep] Empty response`);
       return 0;
     }
 
-    const nightsList: any[] = sleepResponse?.nights ?? [];
+    const nightsList:  any[] = sleepResponse?. nights ??  [];
     console.log(`[syncSleep] Found ${nightsList.length} nights`);
 
     let synced = 0;
 
     for (const night of nightsList) {
       try {
-        console.log(`[syncSleep] Processing night for date: ${night?.date}`);
+        console.log(`[syncSleep] Processing night for date: ${night?. date}`);
 
-        if (!night?.date) {
+        if (! night?.date) {
           console.log(`[syncSleep] No date in night data`);
           continue;
         }
 
         let durationSeconds = 0;
 
-        if (night?.duration) {
+        if (night?. duration) {
           durationSeconds = night.duration;
         } else if (night?.sleep_start_time && night?.sleep_end_time) {
           const startTime = new Date(night.sleep_start_time).getTime();
-          const endTime = new Date(night.sleep_end_time).getTime();
+          const endTime = new Date(night. sleep_end_time).getTime();
           durationSeconds = (endTime - startTime) / 1000;
         } else {
-          console.log(`[syncSleep] No duration data for ${night?.date}`);
+          console.log(`[syncSleep] No duration data for ${night?. date}`);
           durationSeconds = 0;
         }
 
         const sleepRecord = {
-          user_id: userId,
-          polar_sleep_id: `${night?.date}_${night?.device_id || "unknown"}`,
-          sleep_date: night?.date || null,
+          user_id:  userId,
+          polar_sleep_id: `${night?. date}_${night?.device_id || "unknown"}`,
+          sleep_date: night?. date || null,
           bedtime: night?.sleep_start_time || null,
           wake_time: night?.sleep_end_time || null,
           duration_minutes: Math.round(durationSeconds / 60),
-          deep_minutes: Math.round((night?.deep_sleep ?? 0) / 60),
+          deep_minutes: Math.round((night?.deep_sleep ??  0) / 60),
           light_minutes: Math.round((night?.light_sleep ?? 0) / 60),
           rem_minutes: Math.round((night?.rem_sleep ?? 0) / 60),
           awake_minutes: Math.round((night?.total_interruption_duration ?? 0) / 60),
-          sleep_score: night?.sleep_score ?? null,
+          sleep_score: night?.sleep_score ??  null,
           raw_data: night,
         };
 
@@ -296,7 +198,7 @@ async function syncSleep(
         );
         console.log(`[syncSleep] Upserting sleep record for ${night?.date}`);
 
-        await supabase.from("sleep_sessions").upsert(
+        await supabase. from("sleep_sessions").upsert(
           sleepRecord,
           { onConflict: "user_id,polar_sleep_id" },
         );
@@ -304,7 +206,7 @@ async function syncSleep(
         synced++;
         console.log(`[syncSleep] Successfully upserted night ${synced}`);
       } catch (nightError) {
-        console.error(`[syncSleep] Error processing night:`, nightError);
+        console.error(`[syncSleep] Error processing night:  `, nightError);
         continue;
       }
     }
@@ -318,7 +220,7 @@ async function syncSleep(
 }
 
 async function syncNightlyRecharge(
-  supabase: any,
+  supabase:  any,
   userId: string,
   accessToken: string
 ): Promise<number> {
@@ -338,7 +240,7 @@ async function syncNightlyRecharge(
       "Polar nightly recharge fetch"
     );
 
-    const rechargeList:  any[] = rechargeResponse?. recharges || [];
+    const rechargeList: any[] = rechargeResponse?.recharges || [];
     console.log(`[syncNightlyRecharge] Found ${rechargeList.length} recharge records`);
 
     if (rechargeList.length === 0) return 0;
@@ -347,13 +249,12 @@ async function syncNightlyRecharge(
 
     for (const recharge of rechargeList) {
       try {
-        const date = recharge?. date;
+        const date = recharge?.date;
         if (!date) continue;
 
-        const hrv = recharge. heart_rate_variability_avg ?? null;
+        const hrv = recharge. heart_rate_variability_avg ??  null;
         const rhr = recharge.heart_rate_avg ?  Math.round(recharge.heart_rate_avg) : null;
 
-        // ✅ Simple recovery score calculation
         let recoveryScore = null;
         if (hrv && rhr && hrv > 0 && rhr > 0) {
           const hrvRatio = Math.min(hrv / 30, 1.5);
@@ -377,17 +278,16 @@ async function syncNightlyRecharge(
 
         console.log(`[syncNightlyRecharge] Updating metric for ${date}:  recovery_score=${recoveryScore}, HRV=${hrv}, RHR=${rhr}`);
 
-        // ✅ FIXED: Use UPDATE instead of UPSERT
         const { error } = await supabase
           .from("daily_metrics")
           .update({
             recovery_score: recoveryScore,
             hrv: hrv,
             resting_hr: rhr,
-            nightly_recharge_status: recharge.nightly_recharge_status ?? null,
-            ans_charge: recharge.ans_charge ?? null,
-            breathing_rate_avg: recharge.breathing_rate_avg ??  null,
-            updated_at:  new Date().toISOString(),
+            nightly_recharge_status: recharge.nightly_recharge_status ??  null,
+            ans_charge:  recharge.ans_charge ?? null,
+            breathing_rate_avg: recharge.breathing_rate_avg ?? null,
+            updated_at: new Date().toISOString(),
           })
           .eq("user_id", userId)
           .eq("metric_date", date);
@@ -403,7 +303,7 @@ async function syncNightlyRecharge(
       }
     }
 
-    console. log(`[syncNightlyRecharge] Completed:  synced ${synced} records`);
+    console.log(`[syncNightlyRecharge] Completed:  synced ${synced} records`);
     return synced;
   } catch (e) {
     console.error(`[syncNightlyRecharge] Fatal:  ${e}`);
@@ -411,47 +311,48 @@ async function syncNightlyRecharge(
   }
 }
 
-// ✅ NEW:  Sync Body Battery (available per day in daily activity)
-async function syncBodyBattery(
+async function syncActivities(
   supabase: any,
   userId: string,
-  accessToken: string
+  accessToken:  string
 ): Promise<number> {
   try {
-    console.log(`[syncBodyBattery] Starting for user ${userId}`);
+    console. log(`[syncActivities] Starting for user ${userId}`);
 
-    const activityUrl = "https://www.polaraccesslink.com/v3/users/daily-activity";
+    const activitiesUrl = "https://www.polaraccesslink.com/v3/users/activities";
+    console.log(`[syncActivities] Fetching from ${activitiesUrl}`);
 
-    const activityResponse = await fetchJsonOrThrow<any>(
-      activityUrl,
+    const activitiesResponse = await fetchJsonOrThrow<any>(
+      activitiesUrl,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/json",
         },
       },
-      "Polar daily activity fetch"
+      "Polar activities fetch"
     );
 
-    const activityList:  any[] = activityResponse?. activities || [];
-    console.log(`[syncBodyBattery] Found ${activityList. length} activity records`);
+    console.log(`[syncActivities] Response:  `, JSON.stringify(activitiesResponse).substring(0, 200));
 
-    if (activityList.length === 0) return 0;
+    const activitiesList: any[] = activitiesResponse?.activities || [];
+    console.log(`[syncActivities] Found ${activitiesList.length} activities`);
+
+    if (activitiesList. length === 0) return 0;
 
     let synced = 0;
 
-    for (const activity of activityList) {
+    for (const activity of activitiesList) {
       try {
-        const date = activity?. date;
-        if (!date) continue;
+        const date = activity?.date;
+        if (! date) continue;
 
-        console.log(`[syncBodyBattery] Processing ${date}`);
+        console.log(`[syncActivities] Processing ${date}`);
 
-        // ✅ Update daily_metrics with body battery (if available)
         const { error } = await supabase
           .from("daily_metrics")
           .update({
-            body_battery: activity. body_battery ??  null,
+            body_battery: activity.body_battery ??  null,
             total_workout_minutes: Math.round((activity.active_time ??  0) / 1000 / 60),
             total_calories:  activity.total_energy_expenditure ?? null,
             updated_at: new Date().toISOString(),
@@ -460,25 +361,24 @@ async function syncBodyBattery(
           .eq("metric_date", date);
 
         if (error) {
-          console.error(`[syncBodyBattery] Update error:  ${JSON.stringify(error)}`);
+          console.error(`[syncActivities] Update error:  ${JSON.stringify(error)}`);
         } else {
           synced++;
-          console.log(`[syncBodyBattery] Updated ${date}`);
+          console.log(`[syncActivities] Updated ${date}`);
         }
       } catch (e) {
-        console.error(`[syncBodyBattery] Exception:  ${e}`);
+        console.error(`[syncActivities] Exception: ${e}`);
       }
     }
 
-    console.log(`[syncBodyBattery] Completed:  synced ${synced} records`);
+    console.log(`[syncActivities] Completed: synced ${synced} records`);
     return synced;
   } catch (e) {
-    console.error(`[syncBodyBattery] Fatal:  ${e}`);
+    console.error(`[syncActivities] Fatal: ${e}`);
     return 0;
   }
 }
 
-// ✅ NEW:  Sync Sleep Skin Temperature from Elixir Biosensing
 async function syncSkinTemperature(
   supabase: any,
   userId: string,
@@ -500,7 +400,7 @@ async function syncSkinTemperature(
       "Polar skin temperature fetch"
     );
 
-    const skinTempList:   any[] = skinTempResponse || [];
+    const skinTempList: any[] = skinTempResponse || [];
     console.log(`[syncSkinTemperature] Found ${skinTempList.length} skin temperature records`);
 
     if (skinTempList.length === 0) return 0;
@@ -509,36 +409,35 @@ async function syncSkinTemperature(
 
     for (const tempData of skinTempList) {
       try {
-        const date = tempData? .  sleep_date;
-        if (! date) continue;
+        const date = tempData?.sleep_date;
+        if (!date) continue;
 
         console.log(`[syncSkinTemperature] Processing ${date}`);
 
-        // ✅ Update daily_metrics with skin temperature
         const { error } = await supabase
           .from("daily_metrics")
           .update({
-            body_temperature_celsius: tempData.  sleep_time_skin_temperature_celsius ??  null,
+            body_temperature_celsius: tempData.sleep_time_skin_temperature_celsius ?? null,
             updated_at: new Date().toISOString(),
           })
           .eq("user_id", userId)
           .eq("metric_date", date);
 
         if (error) {
-          console.error(`[syncSkinTemperature] Update error:   ${JSON.stringify(error)}`);
+          console.error(`[syncSkinTemperature] Update error: ${JSON.stringify(error)}`);
         } else {
           synced++;
           console.log(`[syncSkinTemperature] Updated ${date}`);
         }
       } catch (e) {
-        console.error(`[syncSkinTemperature] Exception:   ${e}`);
+        console.error(`[syncSkinTemperature] Exception: ${e}`);
       }
     }
 
-    console.log(`[syncSkinTemperature] Completed:   synced ${synced} records`);
+    console.log(`[syncSkinTemperature] Completed: synced ${synced} records`);
     return synced;
   } catch (e) {
-    console.error(`[syncSkinTemperature] Fatal:   ${e}`);
+    console.error(`[syncSkinTemperature] Fatal: ${e}`);
     return 0;
   }
 }
@@ -547,10 +446,10 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const supabaseUrl = Deno.env. get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   if (!supabaseUrl || !serviceRoleKey) {
-    return jsonResponse({ error: "Supabase not configured" }, 500);
+    return jsonResponse({ error:  "Supabase not configured" }, 500);
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
@@ -560,7 +459,7 @@ Deno.serve(async (req) => {
 
     try {
       const body = await req.json();
-      bodyUserId = body?.user_id ?? null;
+      bodyUserId = body?. user_id ??  null;
     } catch {
       // ok
     }
@@ -572,15 +471,15 @@ Deno.serve(async (req) => {
       );
     }
 
-    const results: Array<{
-      user_id: string;
+    const results:  Array<{
+      user_id:  string;
       success: boolean;
-      synced?: number;
+      synced?:  number;
       error?: string;
     }> = [];
 
-    const { data: token } = await supabase
-      .from("oauth_tokens")
+    const { data:  token } = await supabase
+      . from("oauth_tokens")
       .select("*")
       .eq("user_id", bodyUserId)
       .eq("provider", "polar")
@@ -592,7 +491,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    let polarUserId: number | null = token.polar_user_id ? Number(token.polar_user_id) : null;
+    let polarUserId: number | null = token.polar_user_id ?  Number(token.polar_user_id) : null;
 
     if (!polarUserId) {
       const { data: profile } = await supabase
@@ -610,8 +509,7 @@ Deno.serve(async (req) => {
           {
             user_id: bodyUserId,
             success: false,
-            error:
-              "Missing polar_user_id on oauth_tokens. Reconnect Polar so we can register with AccessLink.",
+            error: "Missing polar_user_id on oauth_tokens.  Reconnect Polar so we can register with AccessLink.",
           },
         ],
       });
@@ -620,14 +518,8 @@ Deno.serve(async (req) => {
     try {
       const accessToken = await refreshTokenIfNeeded(supabase, bodyUserId, token);
 
-      console.log(`[sync-polar] Calling syncExercises`);
-      const exercisesSynced = await syncExercises(
-        supabase,
-        bodyUserId,
-        polarUserId,
-        accessToken,
-      );
-      console.log(`[sync-polar] Exercises synced: ${exercisesSynced}`);
+      console.log(`[sync-polar] Skipping syncExercises`);
+      const exercisesSynced = 0;
 
       console.log(`[sync-polar] Calling syncSleep`);
       const sleepSynced = await syncSleep(supabase, bodyUserId, polarUserId, accessToken);
@@ -637,18 +529,18 @@ Deno.serve(async (req) => {
       const rechargeSynced = await syncNightlyRecharge(supabase, bodyUserId, accessToken);
       console.log(`[sync-polar] Nightly recharge synced: ${rechargeSynced}`);
 
-      console.log(`[sync-polar] Calling syncBodyBattery`);
-      const bodyBatterySynced = await syncBodyBattery(supabase, bodyUserId, accessToken);
-      console.log(`[sync-polar] Body battery synced: ${bodyBatterySynced}`);
+      console.log(`[sync-polar] Calling syncActivities`);
+      const activitiesSynced = await syncActivities(supabase, bodyUserId, accessToken);
+      console.log(`[sync-polar] Activities synced: ${activitiesSynced}`);
 
       console.log(`[sync-polar] Calling syncSkinTemperature`);
       const tempSynced = await syncSkinTemperature(supabase, bodyUserId, accessToken);
-      console.log(`[sync-polar] Skin temperature synced: ${tempSynced}`);
+      console.log(`[sync-polar] Skin temperature synced:  ${tempSynced}`);
 
-      results. push({ 
+      results.push({ 
         user_id: bodyUserId, 
         success: true, 
-        synced:   exercisesSynced + sleepSynced + rechargeSynced + bodyBatterySynced + tempSynced 
+        synced: exercisesSynced + sleepSynced + rechargeSynced + activitiesSynced + tempSynced 
       });
 
     } catch (e) {
