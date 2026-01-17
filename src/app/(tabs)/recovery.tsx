@@ -16,18 +16,18 @@ export default function RecoveryScreen() {
 
   const dailyMetrics = useAppStore((s): DailyMetrics[] => s.dailyMetrics);
 
-  // In recovery.tsx, verify you're reading from the correct data
-  const todayMetrics = dailyMetrics.find((m: DailyMetrics) => m.date === today);
-  const recoveryScore = todayMetrics?.recoveryScore ?? 0;  
+  // ✅ FIX: Define today first
+  const today = new Date().toISOString().split('T')[0];
+  const todayMetrics = dailyMetrics.find((m:  DailyMetrics) => m.date === today);
+  const recoveryScore = todayMetrics?. recoveryScore ??  0;  
   const hrv = todayMetrics?.hrv ?? 0;  
   const rhr = todayMetrics?.rhr ?? 0;  
-  const sleepScore = todayMetrics?. sleepScore ?? 0;  
+  const sleepScore = todayMetrics?.sleepScore ?? 0;  
   const bodyBattery = todayMetrics?.bodyBattery ?? 0;
-
 
   // Calculate deltas from 7-day average
   const getLast7Days = () => {
-    const last7 = dailyMetrics.slice(-7);
+    const last7 = dailyMetrics. slice(-7);
     return last7;
   };
 
@@ -43,7 +43,7 @@ export default function RecoveryScreen() {
     const days = range === '7d' ?  7 : range === '30d' ? 30 : 90;
     return dailyMetrics
       .slice(-days)
-      .map((m: DailyMetrics) => {
+      .map((m:  DailyMetrics) => {
         if (metric === 'recovery') {
           return { date: m.date, value: m.recoveryScore ??  0 };
         } else if (metric === 'hrv') {
@@ -54,7 +54,7 @@ export default function RecoveryScreen() {
       });
   };
 
-  const TrendIcon = ({ delta, inverted = false }: { delta:  number; inverted?: boolean }) => {
+  const TrendIcon = ({ delta, inverted = false }: { delta: number; inverted?: boolean }) => {
     const isPositive = inverted ? delta < 0 : delta > 0;
     if (Math.abs(delta) < 0.5) {
       return <Minus size={14} color="#6B7280" />;
@@ -138,7 +138,7 @@ export default function RecoveryScreen() {
               <Info size={14} color="#6B7280" />
             </View>
             <Text className="text-textPrimary text-2xl font-bold mt-2">
-              {sleepScore > 0 ? `${Math.round(sleepScore)}%` : '--'}
+              {sleepScore > 0 ?  `${Math.round(sleepScore)}%` : '--'}
             </Text>
             <Text className="text-xs text-textMuted mt-2">score</Text>
           </View>
@@ -157,7 +157,7 @@ export default function RecoveryScreen() {
                 className={`flex-1 py-2 rounded-lg ${timeRange === range ? 'bg-surfaceLight' : ''}`}
               >
                 <Text className={`text-center text-sm font-medium ${timeRange === range ? 'text-textPrimary' : 'text-textMuted'}`}>
-                  {range === '7d' ? '7 Days' : range === '30d' ? '30 Days' : '90 Days'}
+                  {range === '7d' ?  '7 Days' : range === '30d' ? '30 Days' : '90 Days'}
                 </Text>
               </Pressable>
             ))}
@@ -169,10 +169,10 @@ export default function RecoveryScreen() {
               <Pressable
                 key={metric}
                 onPress={() => setSelectedMetric(metric)}
-                className={`flex-1 py-2 rounded-lg ${selectedMetric === metric ?  'bg-surfaceLight' : ''}`}
+                className={`flex-1 py-2 rounded-lg ${selectedMetric === metric ? 'bg-surfaceLight' : ''}`}
               >
-                <Text className={`text-center text-sm font-medium ${selectedMetric === metric ? 'text-textPrimary' :  'text-textMuted'}`}>
-                  {metric === 'recovery' ? 'Recovery' : metric === 'hrv' ? 'HRV' : 'RHR'}
+                <Text className={`text-center text-sm font-medium ${selectedMetric === metric ? 'text-textPrimary' : 'text-textMuted'}`}>
+                  {metric === 'recovery' ? 'Recovery' :  metric === 'hrv' ?  'HRV' : 'RHR'}
                 </Text>
               </Pressable>
             ))}
@@ -184,7 +184,7 @@ export default function RecoveryScreen() {
           <View className="mx-5 mt-4 bg-surface rounded-2xl p-5">
             <TrendChart
               data={getTrendData(timeRange, selectedMetric)}
-              color={selectedMetric === 'recovery' ?  '#00D1A7' : selectedMetric === 'hrv' ?  '#3B82F6' : '#FF6B35'}
+              color={selectedMetric === 'recovery' ?  '#00D1A7' :  selectedMetric === 'hrv' ? '#3B82F6' : '#FF6B35'}
               height={140}
               showLabels
             />
