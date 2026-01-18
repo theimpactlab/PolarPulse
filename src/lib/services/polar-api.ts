@@ -8,33 +8,43 @@ import { supabase } from '@/lib/supabase/client';
 const POLAR_BASE_URL = 'https://www.polaraccesslink.com/v3';
 
 interface FetchOptions {
-  method?:  'GET' | 'POST' | 'PUT' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: any;
 }
 
 async function getPolarAccessToken(): Promise<string | null> {
   try {
-    const { data:  { session } } = await supabase. auth.getSession();
-    if (! session?. user?.id) return null;
+    const { data: { session } } = await supabase. auth.getSession();
+    if (! session?. user?. id) {
+      console.warn('[getPolarAccessToken] No session found');
+      return null;
+    }
 
     // Get token from oauth_tokens table
-    const { data } = await supabase
-      . from('oauth_tokens')
+    const { data, error } = await supabase
+      .from('oauth_tokens')
       .select('access_token')
       .eq('user_id', session.user. id)
       .eq('provider', 'polar')
       .single();
 
-    return data?.access_token || null;
+    if (error) {
+      console.warn('[getPolarAccessToken] Token query error:', error. message);
+      return null;
+    }
+
+    return data?. access_token || null;
   } catch (e) {
-    console.error('[getPolarAccessToken] Error:', e);
+    console.error('[getPolarAccessToken] Exception:', e);
     return null;
   }
 }
 
 async function polarFetch(endpoint: string, options: FetchOptions = {}) {
   const token = await getPolarAccessToken();
-  if (!token) throw new Error('Polar not connected.  Please authenticate first.');
+  if (!token) {
+    throw new Error('Polar access token not found.  Please authenticate first.');
+  }
 
   const url = `${POLAR_BASE_URL}${endpoint}`;
   const headers:  Record<string, string> = {
@@ -46,19 +56,24 @@ async function polarFetch(endpoint: string, options: FetchOptions = {}) {
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(url, {
-    method: options.method || 'GET',
-    headers,
-    body: options.body ?  JSON.stringify(options.body) : undefined,
-  });
+  try {
+    const response = await fetch(url, {
+      method: options.method || 'GET',
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Polar API error (${response.status}): ${error}`);
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Polar API error (${response.status}): ${error}`);
+    }
+
+    if (response.status === 204) return null;
+    return response.json();
+  } catch (err) {
+    console.error(`[polarFetch] ${endpoint} error:`, err);
+    throw err;
   }
-
-  if (response.status === 204) return null;
-  return response.json();
 }
 
 export const polarApi = {
@@ -89,8 +104,8 @@ export const polarApi = {
     return polarFetch(`/users/activities/${date}`);
   },
 
-  async getActivitiesByDateRange(from: string, to: string) {
-    return polarFetch(`/users/activities? from=${from}&to=${to}`);
+  async getActivitiesByDateRange(from: string, to:  string) {
+    return polarFetch(`/users/activities?from=${from}&to=${to}`);
   },
 
   async getActivitySamples() {
@@ -119,7 +134,7 @@ export const polarApi = {
     return polarFetch(`/users/cardio-load/${date}`);
   },
 
-  async getCardioLoadByDateRange(from: string, to: string) {
+  async getCardioLoadByDateRange(from: string, to:  string) {
     return polarFetch(`/users/cardio-load/date?from=${from}&to=${to}`);
   },
 
@@ -187,7 +202,7 @@ export const polarApi = {
     return polarFetch(`/users/${userId}/exercise-transactions/${transactionId}/exercises/${exerciseId}`);
   },
 
-  async getExerciseHRZones(userId: string, transactionId: string, exerciseId: string) {
+  async getExerciseHRZones(userId: string, transactionId: string, exerciseId:  string) {
     return polarFetch(`/users/${userId}/exercise-transactions/${transactionId}/exercises/${exerciseId}/heart-rate-zones`);
   },
 

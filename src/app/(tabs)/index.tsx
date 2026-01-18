@@ -44,15 +44,16 @@ export default function TodayScreen() {
   // Get today's metrics
   const today = new Date().toISOString().split('T')[0];
 
-  // Fetch real Polar data
-  const exercises = useExercises();
-  const sleepData = useSleepData(today);
-  const cardioLoad = useCardioLoad(today);
-  const dailyMetricsData = useDailyMetrics(today, exercises. data || []);
+  // Only fetch Polar data if connected
+  const exercises = isPolarConnected ? useExercises() : { data: null, loading: false, error: null, refetch: async () => {} };
+  const sleepData = isPolarConnected ? useSleepData(today) : { data: null, loading: false, error: null, refetch: async () => {} };
+  const cardioLoad = isPolarConnected ? useCardioLoad(today) : { data: null, loading: false, error: null, refetch: async () => {} };
+  const dailyMetricsData = isPolarConnected ? useDailyMetrics(today, exercises. data || []) : { data: null, loading: false, error: null, refetch: async () => {} };
 
   // Use Polar data if available, otherwise fallback to store
-  const todayMetricsReal = dailyMetricsData.data || dailyMetrics.find((m:  DailyMetrics) => m.date === today);
-  const todayMetrics = isPolarConnected && todayMetricsReal ? todayMetricsReal : dailyMetrics.find((m: DailyMetrics) => m.date === today);
+  const todayMetrics = isPolarConnected && dailyMetricsData.data 
+    ? dailyMetricsData.data 
+    : dailyMetrics.find((m:  DailyMetrics) => m.date === today);
 
   // Get yesterday's metrics for comparison
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
