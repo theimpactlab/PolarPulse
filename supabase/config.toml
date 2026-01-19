@@ -1,7 +1,0 @@
-# Minimal Supabase CLI config for this repo
-
-[functions.polar-auth]
-verify_jwt = false
-
-[functions.polar-callback]
-verify_jwt = false
