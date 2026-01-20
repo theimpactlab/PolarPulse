@@ -29,28 +29,25 @@ function hmacBase64Url(secret: string, message: string): string {
 }
 
 export async function GET(req: Request) {
-  const POLAR_AUTHORIZE_URL = getEnv("POLAR_AUTHORIZE_URL"); // e.g. https://flow.polar.com/oauth2/authorization
+  const POLAR_AUTHORIZE_URL = getEnv("POLAR_AUTHORIZE_URL");
   const POLAR_CLIENT_ID = getEnv("POLAR_CLIENT_ID");
   const OAUTH_STATE_SECRET = getEnv("OAUTH_STATE_SECRET");
   const SUPABASE_URL = getEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const SUPABASE_ANON_KEY = getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
-  const cookieStore = cookies();
+  // Next.js 15.5+: cookies() can be async in route handlers/types
+  const cookieStore = await cookies();
 
-  // Supabase SSR client (reads auth cookies)
-  const supabase = createServerClient(
-    SUPABASE_URL,
-    getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll() {
-          // no-op here
-        },
+  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll() {
+        // no-op in this handler (fine for getUser + redirect flow)
       },
     },
-  );
+  });
 
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user?.id) {
@@ -62,16 +59,13 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const next = sanitizeNext(searchParams.get("next"));
 
-  // IMPORTANT:
-  // We sign over uid|nextRaw where nextRaw is URL-encoded (stable and reversible)
+  // state = uid|nextRaw|sig, where nextRaw is URI-encoded
   const uid = data.user.id;
   const nextRaw = encodeURIComponent(next);
-
   const msg = `${uid}|${nextRaw}`;
   const sig = hmacBase64Url(OAUTH_STATE_SECRET, msg);
   const state = `${uid}|${nextRaw}|${sig}`;
 
-  // redirect_uri must be the Edge Function URL registered with Polar
   const redirectUri = `${SUPABASE_URL.replace(/\/+$/, "")}/functions/v1/polar-oauth-callback`;
 
   const url = new URL(POLAR_AUTHORIZE_URL);
