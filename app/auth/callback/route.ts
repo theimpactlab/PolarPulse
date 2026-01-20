@@ -2,13 +2,21 @@ import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
+type CookieToSet = {
+  name: string;
+  value: string;
+  options?: Parameters<NextResponse["cookies"]["set"]>[2];
+};
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const next = url.searchParams.get("next") || "/app/dashboard";
 
   if (!code) {
-    return NextResponse.redirect(new URL(`/login?error=missing_code&next=${encodeURIComponent(next)}`, url.origin));
+    return NextResponse.redirect(
+      new URL(`/login?error=missing_code&next=${encodeURIComponent(next)}`, url.origin),
+    );
   }
 
   const cookieStore = await cookies();
@@ -17,7 +25,9 @@ export async function GET(req: Request) {
   const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
   if (!supabaseUrl || !supabaseAnon) {
-    return NextResponse.redirect(new URL(`/login?error=missing_env&next=${encodeURIComponent(next)}`, url.origin));
+    return NextResponse.redirect(
+      new URL(`/login?error=missing_env&next=${encodeURIComponent(next)}`, url.origin),
+    );
   }
 
   const res = NextResponse.redirect(new URL(next, url.origin));
@@ -27,7 +37,7 @@ export async function GET(req: Request) {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet: CookieToSet[]) {
         cookiesToSet.forEach(({ name, value, options }) => {
           res.cookies.set(name, value, options);
         });
