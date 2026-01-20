@@ -8,25 +8,32 @@ function iso(d: Date) {
 export default async function SleepPage({
   searchParams,
 }: {
-  searchParams: { date?: string };
+  searchParams: Promise<{ date?: string }>;
 }) {
+  const sp = await searchParams;
+
   const supabase = createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
-  if (uErr || !userRes.user) return <div className="text-white/80">Not signed in.</div>;
+  if (uErr || !userRes.user) {
+    return <div className="text-white/80">Not signed in.</div>;
+  }
 
-  // Default: yesterday (sleep belongs to previous night)
+  // Sleep belongs to the previous night
   const today = new Date();
   const yday = new Date(today);
   yday.setUTCDate(yday.getUTCDate() - 1);
 
-  const selected = typeof searchParams?.date === "string" ? searchParams.date : iso(yday);
+  const selectedDate =
+    typeof sp?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date)
+      ? sp.date
+      : iso(yday);
 
-  // Daily score
+  // --- Daily metrics (sleep score fallback) ---
   const { data: dm, error: dmErr } = await supabase
     .from("daily_metrics")
     .select("date,sleep_score")
-    .eq("date", selected)
+    .eq("date", selectedDate)
     .maybeSingle();
 
   if (dmErr) {
@@ -38,11 +45,11 @@ export default async function SleepPage({
     );
   }
 
-  // Sleep session (pick longest if multiple)
+  // --- Sleep session (longest if multiple) ---
   const { data: sessions, error: sErr } = await supabase
     .from("sleep_sessions")
     .select("sleep_start,sleep_end,duration_min,efficiency_pct,sleep_score")
-    .eq("sleep_date", selected)
+    .eq("sleep_date", selectedDate)
     .order("duration_min", { ascending: false })
     .limit(1);
 
@@ -57,11 +64,11 @@ export default async function SleepPage({
 
   const session = sessions?.[0] ?? null;
 
-  // Stages for that date
+  // --- Sleep stages ---
   const { data: stagesRows, error: stErr } = await supabase
     .from("sleep_stages")
     .select("stage,minutes")
-    .eq("sleep_date", selected);
+    .eq("sleep_date", selectedDate);
 
   if (stErr) {
     return (
@@ -72,11 +79,11 @@ export default async function SleepPage({
     );
   }
 
-  // HR series
+  // --- HR series during sleep ---
   const { data: hrRows, error: hrErr } = await supabase
     .from("sleep_hr_series")
     .select("t_offset_min,hr")
-    .eq("sleep_date", selected)
+    .eq("sleep_date", selectedDate)
     .order("t_offset_min", { ascending: true });
 
   if (hrErr) {
@@ -90,11 +97,14 @@ export default async function SleepPage({
 
   return (
     <SleepClient
-      date={selected}
+      date={selectedDate}
       sleepScore={(session?.sleep_score ?? dm?.sleep_score) ?? null}
       session={session}
       stages={stagesRows ?? []}
-      hrSeries={(hrRows ?? []).map((r) => ({ t: r.t_offset_min, hr: r.hr }))}
+      hrSeries={(hrRows ?? []).map((r) => ({
+        t: r.t_offset_min,
+        hr: r.hr,
+      }))}
     />
   );
 }

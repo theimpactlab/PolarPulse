@@ -5,14 +5,14 @@ import WorkoutDetailClient from "./ui/WorkoutDetailClient";
 export default async function WorkoutDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  const { id: workoutId } = await params;
+
   const supabase = createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
   if (uErr || !userRes.user) return <div className="text-white/80">Not signed in.</div>;
-
-  const workoutId = params.id;
 
   const { data: w, error: wErr } = await supabase
     .from("workouts")
