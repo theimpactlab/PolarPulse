@@ -6,7 +6,7 @@ function iso(d: Date) {
 }
 
 export default async function DashboardPage() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
   if (uErr || !userRes.user) {
