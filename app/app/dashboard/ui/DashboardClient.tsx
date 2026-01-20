@@ -54,7 +54,7 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
         <div className="grid grid-cols-3 gap-3">
           <RingProgress value={today?.sleep_score} max={100} label="Sleep" />
           <RingProgress value={today?.recovery_score} max={100} label="Recovery" />
-          <RingProgress value={today?.strain_score} max={200} label="Strain" sublabel="0–200" />
+          <RingProgress value={today?.strain_score} max={100} label="Strain" />
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3">
