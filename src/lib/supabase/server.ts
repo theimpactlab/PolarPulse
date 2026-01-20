@@ -4,9 +4,15 @@ import { cookies } from "next/headers";
 type CookieToSet = {
   name: string;
   value: string;
-  options?: Parameters<ReturnType<typeof createServerClient>["auth"]> extends any
-    ? any
-    : never;
+  options?: {
+    path?: string;
+    domain?: string;
+    maxAge?: number;
+    expires?: Date | string;
+    httpOnly?: boolean;
+    secure?: boolean;
+    sameSite?: "lax" | "strict" | "none";
+  };
 };
 
 export async function createSupabaseServerClient() {
@@ -24,15 +30,9 @@ export async function createSupabaseServerClient() {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(cookiesToSet: Array<{ name: string; value: string; options?: any }>) {
-        // In Server Components, setting cookies is only allowed in Route Handlers / Server Actions.
-        // We keep this as a safe no-op to satisfy the interface and avoid runtime crashes.
-        // Middleware should handle session refresh cookie writes.
-        try {
-          cookiesToSet.forEach(() => {});
-        } catch {
-          // ignore
-        }
+      setAll(_cookiesToSet: CookieToSet[]) {
+        // Server Components can't set cookies directly.
+        // Middleware handles refresh + cookie writes.
       },
     },
   });
