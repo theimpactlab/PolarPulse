@@ -1,0 +1,96 @@
+Repo Structure
+
+PolarPulse/
+  README.md ✅
+  .gitignore ✅
+  .env.example ✅
+
+  package.json ✅
+  package-lock.json  ✅           (or pnpm-lock.yaml / yarn.lock)
+  next.config.js ✅
+  postcss.config.js ✅
+  tailwind.config.ts ✅
+  tsconfig.json ✅
+  middleware.ts ✅
+
+  app/
+    layout.tsx ✅
+    globals.css ✅
+
+    login/
+      page.tsx ✅
+
+    polar-callback/
+      page.tsx ✅
+
+    api/
+      polar/
+      State? 
+	  route.ts?
+        connect/
+          route.ts ✅
+
+    (app)/                      # route group (NOT part of the URL)
+      layout.tsx ✅               # bottom nav shell for /app/* pages
+
+      app/
+        dashboard/
+          page.tsx ✅
+          ui/
+            DashboardClient.tsx ✅
+
+        sleep/
+          page.tsx ✅
+          ui/
+            SleepClient.tsx ✅
+
+        activity/
+          page.tsx ✅
+          [id]/
+            page.tsx ✅
+            ui/
+              WorkoutDetailClient.tsx ✅
+
+        profile/
+          page.tsx ✅
+          ui/
+            ProfileClient.tsx ✅
+
+  src/
+    lib/
+      supabase/
+        browser.ts ✅
+        server.ts ✅
+
+    components/
+      RingProgress.tsx ✅
+      SleepStagesBar.tsx ✅
+      SleepHRLine.tsx ✅
+      WorkoutHRLine.tsx ✅
+      ZoneBars.tsx ✅
+
+  public/
+    favicon.ico ✅
+    icons/
+      icon-192.png ✅
+      icon-512.png ✅
+
+  supabase/
+    config.toml
+    migrations/
+      20260120_000001_init.sql ✅
+    functions/
+      sync-polar/index.ts ✅
+      post-sync-orchestrator/index.ts ✅
+      compute-baselines-28d/index.ts ✅
+      compute-recovery/index.ts ✅
+      compute-strain/index.ts ✅
+      compute-health-indicator/index.ts ✅
+      polar-oauth-callback/index.ts ✅
+      nightly-recompute/index.ts ✅
+      delete-user-data/index.ts ✅
+
+  deno.json
+  .github/
+    workflows/
+      supabase-deploy.yml

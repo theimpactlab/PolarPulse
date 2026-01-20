@@ -1,0 +1,119 @@
+-- Materialised views
+
+-- Daily metrics with convenient week/month keys
+create or replace view public.v_daily_metrics_enriched as
+select
+  dm.*,
+  date_trunc('week', dm.date)::date as week_start,
+  date_trunc('month', dm.date)::date as month_start
+from public.daily_metrics dm;
+
+-- Sleep sessions enriched
+create or replace view public.v_sleep_sessions_enriched as
+select
+  s.*,
+  date_trunc('week', s.sleep_date)::date as week_start,
+  date_trunc('month', s.sleep_date)::date as month_start
+from public.sleep_sessions s;
+
+-- Workouts enriched
+create or replace view public.v_workouts_enriched as
+select
+  w.*,
+  date_trunc('week', w.workout_date)::date as week_start,
+  date_trunc('month', w.workout_date)::date as month_start
+from public.workouts w;
+
+create materialized view if not exists public.mv_weekly_dashboard as
+select
+  user_id,
+  date_trunc('week', date)::date as week_start,
+  count(*) as days_present,
+
+  avg(sleep_score)::float as avg_sleep_score,
+  avg(recovery_score)::float as avg_recovery_score,
+  avg(strain_score)::float as avg_strain_score,
+
+  sum(steps)::bigint as sum_steps,
+  sum(active_calories)::bigint as sum_active_calories,
+  sum(total_calories)::bigint as sum_total_calories,
+  sum(distance_m)::bigint as sum_distance_m
+from public.daily_metrics
+group by user_id, date_trunc('week', date)::date;
+
+create index if not exists idx_mv_weekly_dashboard_user_week
+on public.mv_weekly_dashboard(user_id, week_start desc);
+
+create materialized view if not exists public.mv_monthly_activity_overview as
+select
+  user_id,
+  date_trunc('month', workout_date)::date as month_start,
+  count(*) as total_sessions,
+  sum(coalesce(duration_min,0))::bigint as total_duration_min,
+  sum(coalesce(distance_m,0))::bigint as total_distance_m,
+  sum(coalesce(calories,0))::bigint as total_workout_calories
+from public.workouts
+group by user_id, date_trunc('month', workout_date)::date;
+
+create index if not exists idx_mv_monthly_activity_overview_user_month
+on public.mv_monthly_activity_overview(user_id, month_start desc);
+
+create materialized view if not exists public.mv_monthly_sleep_overview as
+select
+  user_id,
+  date_trunc('month', sleep_date)::date as month_start,
+  count(*) as nights_present,
+  avg(sleep_score)::float as avg_sleep_score,
+  avg(duration_min)::float as avg_sleep_duration_min,
+  avg(efficiency_pct)::float as avg_efficiency_pct
+from public.sleep_sessions
+group by user_id, date_trunc('month', sleep_date)::date;
+
+create index if not exists idx_mv_monthly_sleep_overview_user_month
+on public.mv_monthly_sleep_overview(user_id, month_start desc);
+
+create materialized view if not exists public.mv_daily_workout_trends as
+select
+  user_id,
+  workout_date as date,
+  sum(coalesce(distance_m,0))::bigint as distance_m,
+  sum(coalesce(calories,0))::bigint as calories,
+  sum(coalesce(duration_min,0))::bigint as duration_min,
+  count(*) as sessions
+from public.workouts
+group by user_id, workout_date;
+
+create index if not exists idx_mv_daily_workout_trends_user_date
+on public.mv_daily_workout_trends(user_id, date desc);
+
+create or replace function public.refresh_materialized_views()
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  refresh materialized view public.mv_weekly_dashboard;
+  refresh materialized view public.mv_monthly_activity_overview;
+  refresh materialized view public.mv_monthly_sleep_overview;
+  refresh materialized view public.mv_daily_workout_trends;
+end;
+$$;
+
+create or replace view public.v_my_weekly_dashboard as
+select * from public.mv_weekly_dashboard
+where user_id = auth.uid();
+
+create or replace view public.v_my_monthly_activity_overview as
+select * from public.mv_monthly_activity_overview
+where user_id = auth.uid();
+
+create or replace view public.v_my_monthly_sleep_overview as
+select * from public.mv_monthly_sleep_overview
+where user_id = auth.uid();
+
+create or replace view public.v_my_daily_workout_trends as
+select * from public.mv_daily_workout_trends
+where user_id = auth.uid();
+
+
+
