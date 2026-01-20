@@ -12,7 +12,7 @@ function fmtDate(d: string) {
 }
 
 export default async function ActivityPage() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
   if (uErr || !userRes.user) return <div className="text-white/80">Not signed in.</div>;

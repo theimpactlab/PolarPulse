@@ -9,7 +9,7 @@ export default async function WorkoutDetailPage({
 }) {
   const { id: workoutId } = await params;
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
   if (uErr || !userRes.user) return <div className="text-white/80">Not signed in.</div>;

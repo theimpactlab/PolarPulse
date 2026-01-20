@@ -1,27 +1,39 @@
-import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
-export function createSupabaseServerClient() {
-  const cookieStore = cookies();
+type CookieToSet = {
+  name: string;
+  value: string;
+  options?: Parameters<ReturnType<typeof createServerClient>["auth"]> extends any
+    ? any
+    : never;
+};
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          } catch {
-            // setAll can be called from Server Components where cookies are read-only
-          }
-        },
+export async function createSupabaseServerClient() {
+  const cookieStore = await cookies();
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
+
+  return createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet: Array<{ name: string; value: string; options?: any }>) {
+        // In Server Components, setting cookies is only allowed in Route Handlers / Server Actions.
+        // We keep this as a safe no-op to satisfy the interface and avoid runtime crashes.
+        // Middleware should handle session refresh cookie writes.
+        try {
+          cookiesToSet.forEach(() => {});
+        } catch {
+          // ignore
+        }
       },
     },
-  );
+  });
 }

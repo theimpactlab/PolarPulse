@@ -12,7 +12,7 @@ export default async function SleepPage({
 }) {
   const sp = await searchParams;
 
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
   if (uErr || !userRes.user) {
