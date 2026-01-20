@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
-function isSafeNext(nextRaw: string | null): string {
-  // only allow internal /app routes
+type CookieToSet = { name: string; value: string; options?: any };
+
+function safeNext(nextRaw: string | null): string {
   if (!nextRaw) return "/app/dashboard";
   const n = nextRaw.trim();
   if (!n.startsWith("/")) return "/app/dashboard";
@@ -11,12 +12,13 @@ function isSafeNext(nextRaw: string | null): string {
   return n;
 }
 
+// base64url (no padding) helpers that match the edge function
 function base64UrlEncode(bytes: Uint8Array): string {
   const b64 = Buffer.from(bytes).toString("base64");
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-async function hmacSha256(secret: string, message: string): Promise<string> {
+async function hmacSha256B64Url(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -31,7 +33,7 @@ async function hmacSha256(secret: string, message: string): Promise<string> {
 export async function GET(req: Request) {
   const url = new URL(req.url);
 
-  const nextPath = isSafeNext(url.searchParams.get("next"));
+  const nextPath = safeNext(url.searchParams.get("next"));
 
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
   const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -44,26 +46,22 @@ export async function GET(req: Request) {
     return NextResponse.redirect(fail);
   }
 
-  // Supabase Edge Function callback (this is what you registered with Polar)
-  const polarRedirectUri = `${SUPABASE_URL.replace(/\/+$/, "")}/functions/v1/polar-oauth-callback`;
-
-  // Read the signed-in user from cookies
+  // Read logged-in user from cookies
   const cookieStore = await cookies();
-  const res = NextResponse.next();
 
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(_cookiesToSet: Array<{ name: string; value: string; options?: any }>) {
-        // no-op in this route (we’re only reading auth)
-      }
+      setAll(_cookiesToSet: CookieToSet[]) {
+        // no-op (read-only)
+      },
     },
   });
 
-  const { data: userRes } = await supabase.auth.getUser();
-  const user = userRes?.user;
+  const { data } = await supabase.auth.getUser();
+  const user = data?.user;
 
   if (!user) {
     const login = new URL("/login", url.origin);
@@ -71,26 +69,28 @@ export async function GET(req: Request) {
     return NextResponse.redirect(login);
   }
 
-  // Build signed state payload that your Supabase Edge Function expects:
-  // state = base64url(JSON payload) + "." + HMAC(payloadB64)
-  const payloadObj = {
+  // Must match what polar-oauth-callback.parseState expects:
+  // state = base64url(JSON) + "." + HMAC(base64url(JSON))
+  const payload = {
     uid: user.id,
     redir: `/polar-callback?next=${encodeURIComponent(nextPath)}`,
     iat: Math.floor(Date.now() / 1000),
   };
 
-  const payloadJson = JSON.stringify(payloadObj);
+  const payloadJson = JSON.stringify(payload);
   const payloadB64 = base64UrlEncode(new TextEncoder().encode(payloadJson));
-  const sig = await hmacSha256(OAUTH_STATE_SECRET, payloadB64);
+  const sig = await hmacSha256B64Url(OAUTH_STATE_SECRET, payloadB64);
+
   const state = `${payloadB64}.${sig}`;
 
-  // Build Polar authorize URL
-  // Polar AccessLink uses accesslink.read_all scope (if omitted, Polar may ask for all scopes linked to the client)
-  // Authorization endpoint: https://flow.polar.com/oauth2/authorization  [oai_citation:1‡Polar](https://www.polar.com/accesslink-api/?srsltid=AfmBOooye7FUojTa5_HA7Se8phM_sta7uE7YvffP2KPsRHU-KC-yRPNL)
+  // Redirect URI must be the Supabase edge function URL Polar calls back to
+  const redirectUri = `${SUPABASE_URL.replace(/\/+$/, "")}/functions/v1/polar-oauth-callback`;
+
+  // Build Polar authorization URL
   const authUrl = new URL("https://flow.polar.com/oauth2/authorization");
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("client_id", POLAR_CLIENT_ID);
-  authUrl.searchParams.set("redirect_uri", polarRedirectUri);
+  authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("scope", "accesslink.read_all");
   authUrl.searchParams.set("state", state);
 
