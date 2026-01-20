@@ -56,10 +56,9 @@ export async function GET(req: Request) {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(_cookiesToSet: Array<{ name: string; value: string; options?: any }>) {
         // no-op in this route (we’re only reading auth)
-        // but keep method present to satisfy the interface
-      },
+      }
     },
   });
 
