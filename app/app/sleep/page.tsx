@@ -169,11 +169,19 @@ export default async function SleepPage(props: any) {
       ? Math.round(session.time_in_bed_min)
       : derivedTimeInBedMin;
 
+    // Total "asleep" minutes = light + deep + rem (exclude awake)
+  const asleepMin =
+    (stageMinutesByKey.light ?? 0) +
+    (stageMinutesByKey.deep ?? 0) +
+    (stageMinutesByKey.rem ?? 0);
+
+  // Efficiency = asleep / duration * 100
+  // (falls back to existing session.efficiency_pct if present and sensible)
   const efficiencyPct =
     typeof session.efficiency_pct === "number" && session.efficiency_pct > 0
       ? Math.round(session.efficiency_pct)
-      : durationMin && timeInBedMin && timeInBedMin > 0
-        ? Math.round((durationMin / timeInBedMin) * 100)
+      : durationMin && durationMin > 0
+        ? Math.round((asleepMin / durationMin) * 100)
         : null;
 
   // ------------------------------------------------------------
