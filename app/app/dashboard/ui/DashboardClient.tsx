@@ -23,6 +23,7 @@ type Row = {
 };
 
 function formatShortDate(iso: string) {
+  // YYYY-MM-DD -> MM/DD (simple, local-friendly)
   const m = iso.slice(5, 7);
   const d = iso.slice(8, 10);
   return `${m}/${d}`;
@@ -91,8 +92,20 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                   }}
                   labelStyle={{ color: "rgba(255,255,255,0.75)" }}
                 />
-                <Line type="monotone" dataKey="sleep" stroke="rgba(255,255,255,0.9)" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="strain" stroke="rgba(255,255,255,0.45)" strokeWidth={2} dot={false} />
+                <Line
+                  type="monotone"
+                  dataKey="sleep"
+                  stroke="rgba(255,255,255,0.9)"
+                  strokeWidth={2}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="strain"
+                  stroke="rgba(255,255,255,0.45)"
+                  strokeWidth={2}
+                  dot={false}
+                />
               </LineChart>
             </ResponsiveContainer>
           </div>
