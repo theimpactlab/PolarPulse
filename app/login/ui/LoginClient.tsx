@@ -76,7 +76,7 @@ export default function LoginClient() {
     }
   }
 
-  async function sendMagicLink(e: React.FormEvent) {
+    async function sendMagicLink(e: React.FormEvent) {
     e.preventDefault();
     setStatus("working");
     setMsg("");
@@ -84,9 +84,13 @@ export default function LoginClient() {
     try {
       const supabase = createSupabaseBrowserClient();
 
-      const appUrl =
-        process.env.NEXT_PUBLIC_APP_URL ||
-        (typeof window !== "undefined" ? window.location.origin : "");
+      const origin = window.location.origin;
+
+      // IMPORTANT: pick the one that matches your route file location
+      // If your route is app/auth/callback/route.ts:
+      // const callbackPath = "/auth/callback";
+      // If instead it's app/app/auth/callback/route.ts, use:
+      const callbackPath = "/app/auth/callback";
 
       const redirectTo = `${origin}${callbackPath}?next=${encodeURIComponent(nextPath)}`;
 
