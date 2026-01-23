@@ -4,8 +4,6 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-<Link href={it.href} prefetch>
-
 type Item = {
   href: string;
   label: string;
@@ -62,42 +60,45 @@ export default function MobileBottomNav() {
   ];
 
   return (
-    <nav
-      className={[
-        "fixed inset-x-0 bottom-0 z-[1000]",
-        "border-t border-white/10 bg-black/80 backdrop-blur",
-        "pb-[env(safe-area-inset-bottom)]",
-      ].join(" ")}
-      "className={[
-        ...,
-        'active:scale-[0.98] active:bg-white/15',
-        'transition-transform'
-      ].join(' ')}"
-    >
-      <div className="mx-auto grid h-20 max-w-md grid-cols-4 gap-2 px-3 py-3">
-        {items.map((it) => {
-          const active = isActive(pathname, it.href);
+    <>
+      {/* Spacer so content doesn’t sit under the fixed bar */}
+      <div className="h-[88px] md:hidden" />
 
-          return (
-            <Link
-              key={it.href}
-              href={it.href}
-              aria-current={active ? "page" : undefined}
-              className={[
-                "flex flex-col items-center justify-center gap-1",
-                "rounded-2xl border",
-                active
-                  ? "border-white/20 bg-white/10 text-white"
-                  : "border-white/10 bg-white/5 text-white/70 hover:text-white",
-                "active:scale-[0.99] transition select-none",
-              ].join(" ")}
-            >
-              <div className={active ? "text-white" : "text-white/80"}>{it.icon}</div>
-              <div className="text-[12px] font-medium">{it.label}</div>
-            </Link>
-          );
-        })}
-      </div>
-    </nav>
+      <nav
+        className={[
+          "fixed inset-x-0 bottom-0 z-[1000] md:hidden",
+          "border-t border-white/10 bg-black/80 backdrop-blur",
+          "pb-[env(safe-area-inset-bottom)]",
+        ].join(" ")}
+      >
+        <div className="mx-auto grid h-20 max-w-md grid-cols-4 gap-2 px-3 py-3">
+          {items.map((it) => {
+            const active = isActive(pathname, it.href);
+
+            return (
+              <Link
+                key={it.href}
+                href={it.href}
+                prefetch={true}
+                aria-current={active ? "page" : undefined}
+                className={[
+                  "flex flex-col items-center justify-center gap-1",
+                  "rounded-2xl border",
+                  active
+                    ? "border-white/20 bg-white/10 text-white"
+                    : "border-white/10 bg-white/5 text-white/70 hover:text-white",
+                  "select-none",
+                  "transition",
+                  "active:scale-[0.98] active:bg-white/15",
+                ].join(" ")}
+              >
+                <div className={active ? "text-white" : "text-white/80"}>{it.icon}</div>
+                <div className="text-[12px] font-medium">{it.label}</div>
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
+    </>
   );
 }
