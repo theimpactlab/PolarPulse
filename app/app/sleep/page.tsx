@@ -17,11 +17,15 @@ function minutesBetween(a?: string | null, b?: string | null): number | null {
   return Math.max(0, Math.round((tb - ta) / 60000));
 }
 
+type SearchParams = { date?: string };
+
 export default async function SleepPage({
   searchParams,
 }: {
-  searchParams?: { date?: string };
+  searchParams?: Promise<SearchParams>;
 }) {
+  const sp = (await searchParams) ?? {};
+
   const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
@@ -34,10 +38,10 @@ export default async function SleepPage({
   const yday = new Date(today);
   yday.setUTCDate(yday.getUTCDate() - 1);
 
-  const requested = searchParams?.date ?? "";
+  const requested = sp.date ?? "";
   const date = isIsoDate(requested) ? requested : isoDateUTC(yday);
 
-  // Get sleep sessions for the date, choose the longest (or first if equal)
+  // Get sleep sessions for the date, choose the longest
   const { data: sessions, error: sErr } = await supabase
     .from("sleep_sessions")
     .select(
@@ -57,7 +61,6 @@ export default async function SleepPage({
 
   const session = (sessions ?? [])[0] ?? null;
 
-  // If no session for this date, still render page nicely
   if (!session) {
     return (
       <SleepClient
@@ -69,7 +72,6 @@ export default async function SleepPage({
     );
   }
 
-  // Pull stages + HR series by sleep_id
   const [{ data: stageRows, error: stErr }, { data: hrRows, error: hrErr }] =
     await Promise.all([
       supabase
@@ -101,7 +103,6 @@ export default async function SleepPage({
     );
   }
 
-  // Stage seconds -> minutes
   const stageSeconds: Record<string, number> = { awake: 0, light: 0, deep: 0, rem: 0 };
   for (const r of stageRows ?? []) {
     const key = String(r.stage ?? "").toLowerCase();
@@ -116,20 +117,15 @@ export default async function SleepPage({
     remMin: stageSeconds.rem ? Math.round(stageSeconds.rem / 60) : null,
   };
 
-  // HR series: offset seconds -> minutes
   const hrSeries =
     (hrRows ?? [])
       .map((r) => ({
-        tMin:
-          typeof r.t_offset_sec === "number"
-            ? Math.round(r.t_offset_sec / 60)
-            : null,
+        tMin: typeof r.t_offset_sec === "number" ? Math.round(r.t_offset_sec / 60) : null,
         hr: typeof r.hr === "number" ? r.hr : null,
       }))
       .filter((p) => p.tMin !== null && p.hr !== null)
       .map((p) => ({ tMin: p.tMin as number, hr: p.hr as number }));
 
-  // Fix up duration/time-in-bed if the DB row is 0/missing (you’ve seen some 0s)
   const computedDuration = minutesBetween(session.sleep_start, session.sleep_end);
 
   const durationMin =
