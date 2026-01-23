@@ -1,8 +1,27 @@
-// app/app/sleep/page.tsx
 import { createSupabaseServerClient } from "@/src/lib/supabase/server";
-import SleepClient from ".ui/SleepClient";
+import SleepClient from "./ui/SleepClient";
 
-export default async function SleepPage() {
+function isoDateUTC(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+function isIsoDate(s: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function minutesBetween(a?: string | null, b?: string | null): number | null {
+  if (!a || !b) return null;
+  const ta = new Date(a).getTime();
+  const tb = new Date(b).getTime();
+  if (!Number.isFinite(ta) || !Number.isFinite(tb)) return null;
+  return Math.max(0, Math.round((tb - ta) / 60000));
+}
+
+export default async function SleepPage({
+  searchParams,
+}: {
+  searchParams?: { date?: string };
+}) {
   const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
@@ -10,27 +29,59 @@ export default async function SleepPage() {
     return <div className="text-white/80">Not signed in.</div>;
   }
 
-  const userId = userRes.user.id;
+  // Default to "yesterday UTC" because sleep for a night belongs to the next morning date
+  const today = new Date();
+  const yday = new Date(today);
+  yday.setUTCDate(yday.getUTCDate() - 1);
 
-  // Most recent sleep session for this user
-  const { data: session, error: sErr } = await supabase
+  const requested = searchParams?.date ?? "";
+  const date = isIsoDate(requested) ? requested : isoDateUTC(yday);
+
+  // Get sleep sessions for the date, choose the longest (or first if equal)
+  const { data: sessions, error: sErr } = await supabase
     .from("sleep_sessions")
-    .select("*")
-    .eq("user_id", userId)
-    .order("sleep_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .select(
+      "id,sleep_date,sleep_start,sleep_end,duration_min,time_in_bed_min,efficiency_pct,sleep_score,avg_hr,avg_resp_rate,created_at",
+    )
+    .eq("sleep_date", date)
+    .order("duration_min", { ascending: false });
 
-  if (sErr || !session) {
-    return <div className="text-white/60">No sleep data available yet.</div>;
+  if (sErr) {
+    return (
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
+        <div className="text-white/80">Failed to load sleep session</div>
+        <div className="mt-2 text-sm text-white/50">{sErr.message}</div>
+      </div>
+    );
   }
 
-  // Stages for this sleep session
-  const { data: stages, error: stErr } = await supabase
-    .from("sleep_stages")
-    .select("stage,start_time,end_time,duration_sec")
-    .eq("sleep_session_id", session.id)
-    .order("start_time", { ascending: true });
+  const session = (sessions ?? [])[0] ?? null;
+
+  // If no session for this date, still render page nicely
+  if (!session) {
+    return (
+      <SleepClient
+        date={date}
+        session={null}
+        stages={{ awakeMin: null, lightMin: null, deepMin: null, remMin: null }}
+        hrSeries={[]}
+      />
+    );
+  }
+
+  // Pull stages + HR series by sleep_id
+  const [{ data: stageRows, error: stErr }, { data: hrRows, error: hrErr }] =
+    await Promise.all([
+      supabase
+        .from("sleep_stages")
+        .select("stage,seconds")
+        .eq("sleep_id", session.id),
+      supabase
+        .from("sleep_hr_series")
+        .select("t_offset_sec,hr")
+        .eq("sleep_id", session.id)
+        .order("t_offset_sec", { ascending: true }),
+    ]);
 
   if (stErr) {
     return (
@@ -41,27 +92,68 @@ export default async function SleepPage() {
     );
   }
 
-  // HR series for this sleep session
-  const { data: hrSeries, error: hrErr } = await supabase
-    .from("sleep_hr_series")
-    .select("ts,hr")
-    .eq("sleep_session_id", session.id)
-    .order("ts", { ascending: true });
-
   if (hrErr) {
     return (
       <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-        <div className="text-white/80">Failed to load sleep heart rate</div>
+        <div className="text-white/80">Failed to load sleep HR series</div>
         <div className="mt-2 text-sm text-white/50">{hrErr.message}</div>
       </div>
     );
   }
 
+  // Stage seconds -> minutes
+  const stageSeconds: Record<string, number> = { awake: 0, light: 0, deep: 0, rem: 0 };
+  for (const r of stageRows ?? []) {
+    const key = String(r.stage ?? "").toLowerCase();
+    const secs = typeof r.seconds === "number" ? r.seconds : 0;
+    if (key in stageSeconds) stageSeconds[key] += Math.max(0, secs);
+  }
+
+  const stages = {
+    awakeMin: stageSeconds.awake ? Math.round(stageSeconds.awake / 60) : null,
+    lightMin: stageSeconds.light ? Math.round(stageSeconds.light / 60) : null,
+    deepMin: stageSeconds.deep ? Math.round(stageSeconds.deep / 60) : null,
+    remMin: stageSeconds.rem ? Math.round(stageSeconds.rem / 60) : null,
+  };
+
+  // HR series: offset seconds -> minutes
+  const hrSeries =
+    (hrRows ?? [])
+      .map((r) => ({
+        tMin:
+          typeof r.t_offset_sec === "number"
+            ? Math.round(r.t_offset_sec / 60)
+            : null,
+        hr: typeof r.hr === "number" ? r.hr : null,
+      }))
+      .filter((p) => p.tMin !== null && p.hr !== null)
+      .map((p) => ({ tMin: p.tMin as number, hr: p.hr as number }));
+
+  // Fix up duration/time-in-bed if the DB row is 0/missing (you’ve seen some 0s)
+  const computedDuration = minutesBetween(session.sleep_start, session.sleep_end);
+
+  const durationMin =
+    typeof session.duration_min === "number" && session.duration_min > 0
+      ? session.duration_min
+      : computedDuration;
+
+  const timeInBedMin =
+    typeof session.time_in_bed_min === "number" && session.time_in_bed_min > 0
+      ? session.time_in_bed_min
+      : computedDuration;
+
+  const normalizedSession = {
+    ...session,
+    duration_min: durationMin ?? null,
+    time_in_bed_min: timeInBedMin ?? null,
+  };
+
   return (
     <SleepClient
-      session={session}
-      stages={stages ?? []}
-      hrSeries={hrSeries ?? []}
+      date={date}
+      session={normalizedSession}
+      stages={stages}
+      hrSeries={hrSeries}
     />
   );
 }
