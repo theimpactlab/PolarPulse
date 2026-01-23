@@ -88,7 +88,7 @@ export default function LoginClient() {
         process.env.NEXT_PUBLIC_APP_URL ||
         (typeof window !== "undefined" ? window.location.origin : "");
 
-      const redirectTo = `${appUrl}/auth/callback?next=${encodeURIComponent(nextPath)}`;
+      const redirectTo = `${origin}${callbackPath}?next=${encodeURIComponent(nextPath)}`;
 
       const { error } = await supabase.auth.signInWithOtp({
         email,
