@@ -5,19 +5,7 @@ function iso(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
-function clampRange(v: unknown) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 14;
-  if (n <= 7) return 7;
-  if (n <= 14) return 14;
-  return 28;
-}
-
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams?: { range?: string };
-}) {
+export default async function DashboardPage() {
   const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
@@ -25,11 +13,9 @@ export default async function DashboardPage({
     return <div className="text-white/80">Not signed in.</div>;
   }
 
-  const rangeDays = clampRange(searchParams?.range);
-
   const today = new Date();
   const from = new Date(today);
-  from.setUTCDate(from.getUTCDate() - (rangeDays - 1));
+  from.setUTCDate(from.getUTCDate() - 13);
 
   const { data, error } = await supabase
     .from("daily_metrics")
@@ -47,5 +33,7 @@ export default async function DashboardPage({
     );
   }
 
-  return <DashboardClient rows={data ?? []} rangeDays={rangeDays} />;
+  return (
+    <DashboardClient rows={data ?? []} />
+  );
 }
