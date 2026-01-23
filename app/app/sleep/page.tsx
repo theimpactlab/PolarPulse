@@ -1,6 +1,6 @@
 // app/app/sleep/page.tsx
 import { createSupabaseServerClient } from "@/src/lib/supabase/server";
-import SleepClient from "./SleepClient";
+import SleepClient from ".ui/SleepClient";
 
 export default async function SleepPage() {
   const supabase = await createSupabaseServerClient();
