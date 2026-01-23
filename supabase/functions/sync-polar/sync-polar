@@ -1,0 +1,841 @@
+// Supabase Edge Function: sync-polar (AccessLink v3)
+// Deploy: supabase functions deploy sync-polar
+//
+// Purpose
+// - Pull new exercises from Polar AccessLink v3 using TRANSACTIONS
+// - Pull sleep using available + date endpoints (NOT sleep-transactions)
+// - Upsert into: workouts, workout_hr_series, workout_hr_zones
+//               sleep_sessions, sleep_stages, sleep_hr_series
+//
+// Important Polar limitations (per AccessLink v3 docs):
+// - Exercise transactions only include data uploaded to Flow in the last 30 days,
+//   and only data uploaded after the user registered with your client.
+// - Sleep available/date endpoints similarly have recency constraints.
+// If you see workoutsUpserted=0, it can simply mean “no new workouts available”.
+//
+// Modes
+// 1) User mode: Authorization: Bearer <supabase jwt>
+// 2) Service mode: x-sync-secret + body.userId
+//
+// Required env vars (Supabase function secrets):
+// - SUPABASE_URL
+// - SUPABASE_SERVICE_ROLE_KEY
+// - SUPABASE_ANON_KEY
+// - SYNC_SECRET
+// - POLAR_API_BASE_URL   (set to: https://www.polaraccesslink.com/v3)
+//
+// Optional:
+// - POLAR_SYNC_LOOKBACK_DAYS   (default 30)
+//
+// Notes
+// - Exercise (transactions):
+//   - POST /users/{polarUserId}/exercise-transactions
+//   - GET  /users/{polarUserId}/exercise-transactions/{transactionId}
+//   - GET  /users/{polarUserId}/exercise-transactions/{transactionId}/exercises/{exerciseId}
+//   - GET  /users/{polarUserId}/exercise-transactions/{transactionId}/exercises/{exerciseId}/samples/{type-id}
+//   - GET  /users/{polarUserId}/exercise-transactions/{transactionId}/exercises/{exerciseId}/heart-rate-zones
+//
+// - Sleep (available + date):
+//   - GET /users/sleep/available?from=YYYY-MM-DD&to=YYYY-MM-DD
+//   - GET /users/sleep/{date}
+//
+// - polar_connections MUST include: user_id, polar_user_id, access_token
+//
+// Tables expected (minimum):
+// - workouts: id, user_id, polar_id (unique), start_time, end_time, workout_date, type, raw, ...
+// - workout_hr_series: user_id, workout_id, t_offset_sec, hr
+// - workout_hr_zones: user_id, workout_id, zone, seconds, min_bpm, max_bpm
+//
+// - sleep_sessions: user_id, polar_id (unique), sleep_date, sleep_start, sleep_end,
+//                  duration_min, time_in_bed_min, efficiency_pct, sleep_score,
+//                  avg_hr, min_hr, max_hr, avg_resp_rate, raw ...
+//   (If some of these columns don’t exist in your DB, remove them from the upsert payload.)
+// - sleep_stages: user_id, sleep_id, stage, minutes
+// - sleep_hr_series: user_id, sleep_id, t_offset_sec, hr
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-sync-secret",
+  "Access-Control-Allow-Methods": "POST,OPTIONS",
+};
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function getEnv(name: string, required = true): string {
+  const v = Deno.env.get(name);
+  if (!v && required) throw new Error(`Missing env var: ${name}`);
+  return v ?? "";
+}
+
+async function readTextSafe(res: Response): Promise<string> {
+  try {
+    return await res.text();
+  } catch {
+    return "";
+  }
+}
+
+function parseJsonSafe(text: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Promise<Response> {
+  let lastErr: unknown = null;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.status >= 500 && i < retries) {
+        await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+        continue;
+      }
+      return res;
+    } catch (e) {
+      lastErr = e;
+      if (i < retries) await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+    }
+  }
+  throw lastErr ?? new Error("fetchWithRetry failed");
+}
+
+async function polarRequestJson(
+  baseUrl: string,
+  path: string,
+  accessToken: string,
+  init?: RequestInit,
+): Promise<any> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  const res = await fetchWithRetry(url, {
+    method: init?.method ?? "GET",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Accept": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    body: init?.body,
+  });
+
+  const text = await readTextSafe(res);
+  const json = parseJsonSafe(text);
+
+  if (!res.ok) {
+    throw new Error(`Polar API error ${res.status} ${url}: ${text.slice(0, 400)}`);
+  }
+  return json ?? text;
+}
+
+function toIsoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function asInt(v: any): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+function asFloat(v: any): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function asBool(v: any): boolean {
+  return v === true || v === "true" || v === 1 || v === "1";
+}
+
+function dateOnlyFromIso(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+function computeWorkoutDate(startTimeIso: string | null): string | null {
+  return dateOnlyFromIso(startTimeIso);
+}
+function computeSleepDate(sleepEndIso: string | null): string | null {
+  return dateOnlyFromIso(sleepEndIso);
+}
+
+// -------------------------
+// Workouts mapping
+// -------------------------
+type WorkoutUpsert = {
+  user_id: string;
+  polar_id: string;
+  start_time: string;
+  end_time?: string | null;
+  workout_date: string;
+  type?: string | null; // your table has `type`
+  sport?: string | null;
+  duration_min?: number | null;
+  calories?: number | null;
+  distance_m?: number | null;
+  avg_hr?: number | null;
+  max_hr?: number | null;
+  tlp_cardio?: number | null;
+  tlp_muscle?: number | null;
+  tlp_perceived?: number | null;
+  route_available?: boolean;
+  raw?: any;
+};
+
+function mapPolarExerciseToWorkout(userId: string, ex: any): WorkoutUpsert | null {
+  const polarId = String(ex?.id ?? ex?.polar_id ?? ex?.exercise_id ?? "");
+  const start = ex?.start_time ?? ex?.startTime ?? ex?.start ?? ex?.startTimeUtc ?? null;
+  const end = ex?.end_time ?? ex?.endTime ?? ex?.end ?? ex?.endTimeUtc ?? null;
+
+  const workoutDate = computeWorkoutDate(start);
+  if (!polarId || !start || !workoutDate) return null;
+
+  const type = ex?.type ?? ex?.sport ?? ex?.activity ?? ex?.sport_name ?? null;
+
+  return {
+    user_id: userId,
+    polar_id: polarId,
+    start_time: new Date(start).toISOString(),
+    end_time: end ? new Date(end).toISOString() : null,
+    workout_date: workoutDate,
+    type,
+    sport: ex?.sport ?? ex?.activity ?? ex?.sport_name ?? type,
+    duration_min: asInt(ex?.duration_min ?? ex?.durationMinutes ?? ex?.duration ?? null),
+    calories: asInt(ex?.calories ?? null),
+    distance_m: asInt(ex?.distance_m ?? ex?.distanceMeters ?? ex?.distance ?? null),
+    avg_hr: asInt(ex?.avg_hr ?? ex?.average_hr ?? ex?.avgHr ?? null),
+    max_hr: asInt(ex?.max_hr ?? ex?.maximum_hr ?? ex?.maxHr ?? null),
+    tlp_cardio: asFloat(ex?.tlp_cardio ?? ex?.training_load_cardio ?? ex?.cardio_load ?? null),
+    tlp_muscle: asFloat(ex?.tlp_muscle ?? ex?.training_load_muscle ?? ex?.muscle_load ?? null),
+    tlp_perceived: asFloat(ex?.tlp_perceived ?? ex?.training_load_perceived ?? ex?.perceived_load ?? null),
+    route_available: asBool(ex?.route_available ?? ex?.has_route ?? false),
+    raw: ex,
+  };
+}
+
+function normalizeHrSeries(series: any): Array<{ t_offset_sec: number; hr: number }> {
+  if (!Array.isArray(series)) return [];
+  const out: Array<{ t_offset_sec: number; hr: number }> = [];
+  for (const p of series) {
+    const t = asInt(p?.t_offset_sec ?? p?.t ?? p?.offset ?? p?.seconds ?? null);
+    const hr = asInt(p?.hr ?? p?.value ?? p?.bpm ?? null);
+    if (t === null || hr === null) continue;
+    out.push({ t_offset_sec: t, hr });
+  }
+  out.sort((a, b) => a.t_offset_sec - b.t_offset_sec);
+  return out;
+}
+
+function normalizeHrZones(zones: any): Array<{ zone: number; seconds: number; min_bpm?: number | null; max_bpm?: number | null }> {
+  if (!Array.isArray(zones)) return [];
+  const out: Array<{ zone: number; seconds: number; min_bpm?: number | null; max_bpm?: number | null }> = [];
+  for (const z of zones) {
+    const zone = asInt(z?.zone ?? z?.id ?? null);
+    const seconds = asInt(z?.seconds ?? z?.duration_sec ?? z?.durationSeconds ?? null);
+    if (zone === null || seconds === null) continue;
+    out.push({
+      zone,
+      seconds,
+      min_bpm: asInt(z?.min_bpm ?? z?.min ?? null),
+      max_bpm: asInt(z?.max_bpm ?? z?.max ?? null),
+    });
+  }
+  out.sort((a, b) => a.zone - b.zone);
+  return out;
+}
+
+// -------------------------
+// Sleep mapping
+// -------------------------
+type SleepUpsert = {
+  user_id: string;
+  polar_id: string;
+  sleep_start: string;
+  sleep_end: string;
+  sleep_date: string;
+
+  // columns you said you want populated:
+  duration_min?: number | null;
+  time_in_bed_min?: number | null;
+  efficiency_pct?: number | null;
+  sleep_score?: number | null;
+  avg_hr?: number | null;
+  min_hr?: number | null;
+  max_hr?: number | null;
+  avg_resp_rate?: number | null;
+
+  raw?: any;
+};
+
+// Compute minutes difference from ISO strings
+function minutesBetween(startIso: string, endIso: string): number | null {
+  const a = new Date(startIso).getTime();
+  const b = new Date(endIso).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b) || b < a) return null;
+  return Math.round((b - a) / 60000);
+}
+
+// Extract hr stats from samples (array or object)
+function computeHrStatsFromSamples(samples: any): { avg: number | null; min: number | null; max: number | null } {
+  const vals: number[] = [];
+
+  if (Array.isArray(samples)) {
+    for (const s of samples) {
+      const hr = Number(s?.hr ?? s?.heart_rate ?? s?.bpm ?? s);
+      if (Number.isFinite(hr)) vals.push(Math.trunc(hr));
+    }
+  } else if (samples && typeof samples === "object") {
+    for (const k of Object.keys(samples)) {
+      const hr = Number(samples[k]);
+      if (Number.isFinite(hr)) vals.push(Math.trunc(hr));
+    }
+  }
+
+  if (!vals.length) return { avg: null, min: null, max: null };
+
+  let min = vals[0], max = vals[0], sum = 0;
+  for (const v of vals) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+  }
+  const avg = Math.round(sum / vals.length);
+  return { avg, min, max };
+}
+
+function mapPolarSleepToSleepSession(userId: string, s: any): SleepUpsert | null {
+  // For /users/sleep/{date}, Polar includes "date" plus "sleep_start_time"/"sleep_end_time"
+  const polarId = String(s?.date ?? s?.id ?? s?.sleep_id ?? s?.night_id ?? "");
+  const startRaw = s?.sleep_start_time ?? s?.sleep_start ?? s?.start_time ?? s?.start ?? null;
+  const endRaw = s?.sleep_end_time ?? s?.sleep_end ?? s?.end_time ?? s?.end ?? null;
+
+  if (!polarId || !startRaw || !endRaw) return null;
+
+  const sleepStart = new Date(startRaw).toISOString();
+  const sleepEnd = new Date(endRaw).toISOString();
+
+  const sleepDate =
+    computeSleepDate(sleepEnd) ??
+    (typeof s?.date === "string" ? s.date : null);
+
+  if (!sleepDate) return null;
+
+  // Polar sleep payload you logged includes: sleep_score and heart_rate_samples
+  const sleepScore = asInt(s?.sleep_score ?? s?.sleepScore ?? null);
+
+  // duration: we can compute reliably from timestamps
+  const durationMin = minutesBetween(sleepStart, sleepEnd);
+
+  // time_in_bed_min: Polar doesn’t always provide it; as a fallback, use duration
+  const timeInBedMin =
+    asInt(s?.time_in_bed_min ?? s?.time_in_bed ?? null) ??
+    durationMin;
+
+  // efficiency_pct + avg_resp_rate are often not present in this endpoint payload
+  const efficiencyPct = asInt(s?.efficiency_pct ?? s?.sleep_efficiency ?? null);
+  const avgRespRate = asFloat(s?.avg_resp_rate ?? s?.respiratory_rate_avg ?? null);
+
+  // HR stats: compute from heart_rate_samples (your raw shows it exists)
+  const hrStats = computeHrStatsFromSamples(s?.heart_rate_samples);
+
+  return {
+    user_id: userId,
+    polar_id: polarId,
+    sleep_start: sleepStart,
+    sleep_end: sleepEnd,
+    sleep_date: sleepDate,
+
+    duration_min: durationMin,
+    time_in_bed_min: timeInBedMin,
+    efficiency_pct: efficiencyPct,
+    sleep_score: sleepScore,
+    avg_hr: hrStats.avg,
+    min_hr: hrStats.min,
+    max_hr: hrStats.max,
+    avg_resp_rate: avgRespRate,
+
+    raw: s,
+  };
+}
+
+// Sleep HR series normalization
+// Your actual payload (from your CSV) has `heart_rate_samples` as an OBJECT like:
+//   { "00:00": 52, "00:01": 51, ... }
+// We support both object and array shapes.
+function normalizeSleepHrSamples(
+  samples: any,
+  sleepStartIso: string,
+): Array<{ t_offset_sec: number; hr: number }> {
+  if (!samples || !sleepStartIso) return [];
+
+  const startMs = new Date(sleepStartIso).getTime();
+  const startOk = !Number.isNaN(startMs);
+
+  const out: Array<{ t_offset_sec: number; hr: number }> = [];
+
+  // Case A: array samples [{time, heart_rate}, ...]
+  if (Array.isArray(samples)) {
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i];
+      const hr = Number(s?.hr ?? s?.heart_rate ?? s?.bpm);
+      if (!Number.isFinite(hr)) continue;
+
+      let offsetSec: number | null = null;
+
+      if (typeof s?.time === "string" && startOk) {
+        const t = new Date(s.time).getTime();
+        if (!Number.isNaN(t)) offsetSec = Math.max(0, Math.floor((t - startMs) / 1000));
+      }
+
+      if (offsetSec === null) offsetSec = i * 60; // fallback: 60s sampling
+      out.push({ t_offset_sec: offsetSec, hr: Math.trunc(hr) });
+    }
+
+    out.sort((a, b) => a.t_offset_sec - b.t_offset_sec);
+    return out;
+  }
+
+  // Case B: object samples {"HH:MM": bpm, ...} (this matches your real data)
+  if (samples && typeof samples === "object") {
+    for (const k of Object.keys(samples)) {
+      const hr = Number(samples[k]);
+      if (!Number.isFinite(hr)) continue;
+
+      // Prefer parsing "HH:MM" as offset from sleep start (minutes from start)
+      // In your dataset this is the only safe assumption without extra metadata.
+      let offsetSec: number | null = null;
+
+      const m = /^(\d{1,2}):(\d{2})$/.exec(k);
+      if (m) {
+        const hh = Number(m[1]);
+        const mm = Number(m[2]);
+        if (Number.isFinite(hh) && Number.isFinite(mm)) {
+          offsetSec = (hh * 60 + mm) * 60;
+        }
+      }
+
+      // If key is an ISO string time, try that too
+      if (offsetSec === null && typeof k === "string" && startOk) {
+        const t = new Date(k).getTime();
+        if (!Number.isNaN(t)) offsetSec = Math.max(0, Math.floor((t - startMs) / 1000));
+      }
+
+      if (offsetSec === null) continue;
+
+      out.push({ t_offset_sec: offsetSec, hr: Math.trunc(hr) });
+    }
+
+    out.sort((a, b) => a.t_offset_sec - b.t_offset_sec);
+    return out;
+  }
+
+  return [];
+}
+
+// Sleep stages normalization
+// Your payload keys include light_sleep/deep_sleep/rem_sleep (often seconds).
+function normalizeSleepStagesFromPolar(
+  detail: any,
+): Array<{ stage: "awake" | "light" | "deep" | "rem"; minutes: number }> {
+  const out: Array<{ stage: "awake" | "light" | "deep" | "rem"; minutes: number }> = [];
+
+  const light = asInt(detail?.light_sleep);
+  const deep = asInt(detail?.deep_sleep);
+  const rem = asInt(detail?.rem_sleep);
+
+  function toMinutesMaybe(v: number | null): number | null {
+    if (v === null) return null;
+    if (v > 1000) return Math.round(v / 60); // likely seconds
+    return v; // already minutes
+  }
+
+  const lightMin = toMinutesMaybe(light);
+  const deepMin = toMinutesMaybe(deep);
+  const remMin = toMinutesMaybe(rem);
+
+  if (lightMin !== null) out.push({ stage: "light", minutes: lightMin });
+  if (deepMin !== null) out.push({ stage: "deep", minutes: deepMin });
+  if (remMin !== null) out.push({ stage: "rem", minutes: remMin });
+
+  // awake minutes often isn’t provided directly in this endpoint
+  return out;
+}
+
+async function getUserIdFromJwt(opts: {
+  supabaseUrl: string;
+  anonKey: string;
+  jwt: string;
+}): Promise<string> {
+  const supabaseUser = createClient(opts.supabaseUrl, opts.anonKey, {
+    global: { headers: { Authorization: `Bearer ${opts.jwt}` } },
+    auth: { persistSession: false },
+  });
+
+  const { data, error } = await supabaseUser.auth.getUser();
+  if (error || !data?.user?.id) throw new Error("Invalid user token");
+  return data.user.id;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  try {
+    const SUPABASE_URL = getEnv("SUPABASE_URL");
+    const SERVICE_ROLE = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+    const ANON_KEY = getEnv("SUPABASE_ANON_KEY");
+    const SYNC_SECRET = getEnv("SYNC_SECRET");
+    const POLAR_API_BASE_URL = getEnv("POLAR_API_BASE_URL");
+    const LOOKBACK_DAYS = Number(Deno.env.get("POLAR_SYNC_LOOKBACK_DAYS") ?? "30");
+
+    const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE, {
+      auth: { persistSession: false },
+    });
+
+    const syncSecretHeader = req.headers.get("x-sync-secret");
+    const isServiceMode = !!(syncSecretHeader && syncSecretHeader === SYNC_SECRET);
+
+    const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+
+    let userId: string;
+    if (isServiceMode) {
+      if (typeof body?.userId !== "string" || !body.userId) {
+        return jsonResponse({ ok: false, error: "Missing userId (service mode)" }, 400);
+      }
+      userId = body.userId;
+    } else {
+      const authHeader = req.headers.get("authorization") ?? "";
+      const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+      if (!jwt) return jsonResponse({ ok: false, error: "Missing Authorization bearer token" }, 401);
+      userId = await getUserIdFromJwt({ supabaseUrl: SUPABASE_URL, anonKey: ANON_KEY, jwt });
+    }
+
+    // Load Polar connection
+    const { data: conn, error: connErr } = await supabaseAdmin
+      .from("polar_connections")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (connErr) throw connErr;
+
+    if (!conn?.access_token) {
+      return jsonResponse({ ok: false, error: "Polar not connected (missing access_token)" }, 400);
+    }
+    if (!conn?.polar_user_id) {
+      return jsonResponse({ ok: false, error: "Polar connection missing polar_user_id (x_user_id). Reconnect Polar." }, 400);
+    }
+
+    const accessToken: string = conn.access_token;
+    const polarUserId: string = String(conn.polar_user_id);
+
+    // Determine sinceDate
+    const sinceIso = typeof body?.since === "string" ? body.since : null;
+    let sinceDate: Date;
+    if (sinceIso) {
+      const d = new Date(sinceIso);
+      sinceDate = Number.isNaN(d.getTime()) ? new Date(Date.now() - LOOKBACK_DAYS * 86400_000) : d;
+    } else if (conn.last_synced_at) {
+      const d = new Date(conn.last_synced_at);
+      sinceDate = Number.isNaN(d.getTime()) ? new Date(Date.now() - LOOKBACK_DAYS * 86400_000) : d;
+    } else {
+      sinceDate = new Date(Date.now() - LOOKBACK_DAYS * 86400_000);
+    }
+
+    const datesTouched = new Set<string>();
+    let workoutsUpserted = 0;
+    let sleepUpserted = 0;
+
+    // Debug counters
+    let exerciseTxId: string | null = null;
+    let exerciseListCount = 0;
+    let sleepAvailableCount = 0;
+    let sleepHrInsertedPoints = 0;
+
+    // -------------------------
+    // EXERCISE transactions
+    // -------------------------
+    const exTx = await polarRequestJson(
+      POLAR_API_BASE_URL,
+      `users/${encodeURIComponent(polarUserId)}/exercise-transactions`,
+      accessToken,
+      { method: "POST" },
+    );
+
+    const exTxId = String(exTx?.transactionId ?? exTx?.transaction_id ?? exTx?.id ?? "");
+    exerciseTxId = exTxId || null;
+
+    if (exTxId) {
+      const exList = await polarRequestJson(
+        POLAR_API_BASE_URL,
+        `users/${encodeURIComponent(polarUserId)}/exercise-transactions/${encodeURIComponent(exTxId)}`,
+        accessToken,
+      );
+
+      // Docs show: { "exercises": ["https://.../exercises/56", ...] }
+      // Some SDKs return objects. We support both.
+      const exItems: any[] = Array.isArray(exList?.exercises) ? exList.exercises : [];
+      exerciseListCount = exItems.length;
+
+      for (const item of exItems) {
+        // If item is a URL, extract the last segment as id
+        let exId = "";
+        if (typeof item === "string") {
+          const m = /\/exercises\/(\d+)$/.exec(item);
+          exId = m ? m[1] : "";
+        } else {
+          exId = String(item?.id ?? item?.exercise_id ?? "");
+        }
+        if (!exId) continue;
+
+        const exDetail = await polarRequestJson(
+          POLAR_API_BASE_URL,
+          `users/${encodeURIComponent(polarUserId)}/exercise-transactions/${encodeURIComponent(exTxId)}/exercises/${encodeURIComponent(exId)}`,
+          accessToken,
+        );
+
+        const mapped = mapPolarExerciseToWorkout(userId, exDetail);
+        if (!mapped) continue;
+
+        datesTouched.add(mapped.workout_date);
+
+        const { data: upW, error: upWErr } = await supabaseAdmin
+          .from("workouts")
+          .upsert(mapped, { onConflict: "polar_id" })
+          .select("id, polar_id")
+          .eq("polar_id", mapped.polar_id)
+          .maybeSingle();
+
+        if (upWErr) throw upWErr;
+        const workoutId = upW?.id;
+        if (!workoutId) continue;
+
+        workoutsUpserted++;
+
+        // Pull samples + zones from dedicated endpoints (more reliable than hoping they’re in exDetail)
+        // 1) HR zones
+        try {
+          const zonesPayload = await polarRequestJson(
+            POLAR_API_BASE_URL,
+            `users/${encodeURIComponent(polarUserId)}/exercise-transactions/${encodeURIComponent(exTxId)}/exercises/${encodeURIComponent(exId)}/heart-rate-zones`,
+            accessToken,
+          );
+
+          const zones = normalizeHrZones(zonesPayload?.zones ?? zonesPayload);
+          if (zones.length) {
+            await supabaseAdmin.from("workout_hr_zones").delete().eq("workout_id", workoutId);
+            const rows = zones.map((z) => ({
+              user_id: userId,
+              workout_id: workoutId,
+              zone: z.zone,
+              seconds: z.seconds,
+              min_bpm: z.min_bpm ?? null,
+              max_bpm: z.max_bpm ?? null,
+            }));
+            const { error: insErr } = await supabaseAdmin.from("workout_hr_zones").insert(rows);
+            if (insErr) throw insErr;
+          }
+        } catch {
+          // zones endpoint may 404 for some exercises; ignore
+        }
+
+        // 2) Samples index -> then fetch each sample type
+        try {
+          const samplesIndex = await polarRequestJson(
+            POLAR_API_BASE_URL,
+            `users/${encodeURIComponent(polarUserId)}/exercise-transactions/${encodeURIComponent(exTxId)}/exercises/${encodeURIComponent(exId)}/samples`,
+            accessToken,
+          );
+
+          const sampleUrls: string[] = Array.isArray(samplesIndex?.samples) ? samplesIndex.samples : [];
+          // Look for a “heart rate” sample type by fetching each type-id until we see HR-like structure
+          // (This is defensive; once you confirm the type-id for HR, hardcode it.)
+          let hrSeries: Array<{ t_offset_sec: number; hr: number }> = [];
+
+          for (const u of sampleUrls) {
+            const m = /\/samples\/(\d+)$/.exec(u);
+            const typeId = m ? m[1] : "";
+            if (!typeId) continue;
+
+            const samplePayload = await polarRequestJson(
+              POLAR_API_BASE_URL,
+              `users/${encodeURIComponent(polarUserId)}/exercise-transactions/${encodeURIComponent(exTxId)}/exercises/${encodeURIComponent(exId)}/samples/${encodeURIComponent(typeId)}`,
+              accessToken,
+            );
+
+            // sample payload varies; common is { "samples": [...] } or { "data": [...] }
+            const cand = samplePayload?.samples ?? samplePayload?.data ?? samplePayload;
+            const norm = normalizeHrSeries(cand);
+
+            // pick the first “plausible” HR series we find
+            if (norm.length >= 10) {
+              hrSeries = norm;
+              break;
+            }
+          }
+
+          if (hrSeries.length) {
+            await supabaseAdmin.from("workout_hr_series").delete().eq("workout_id", workoutId);
+            const rows = hrSeries.map((p) => ({
+              user_id: userId,
+              workout_id: workoutId,
+              t_offset_sec: p.t_offset_sec,
+              hr: p.hr,
+            }));
+            const { error: insErr } = await supabaseAdmin.from("workout_hr_series").insert(rows);
+            if (insErr) throw insErr;
+          }
+        } catch {
+          // samples may not be available for all exercises; ignore
+        }
+      }
+
+      // Commit transaction (so Polar marks items as handled)
+      try {
+        await polarRequestJson(
+          POLAR_API_BASE_URL,
+          `users/${encodeURIComponent(polarUserId)}/exercise-transactions/${encodeURIComponent(exTxId)}`,
+          accessToken,
+          { method: "PUT" },
+        );
+      } catch {
+        // commit failing is not fatal for your DB insert, but you may see same items again
+      }
+    }
+
+    // -------------------------
+    // SLEEP: available + date
+    // -------------------------
+    const fromDate = toIsoDate(sinceDate);
+    const todayDate = toIsoDate(new Date());
+
+    const sleepAvailable = await polarRequestJson(
+      POLAR_API_BASE_URL,
+      `users/sleep/available?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(todayDate)}`,
+      accessToken,
+    );
+
+    const availableDates: string[] = [];
+    if (Array.isArray(sleepAvailable)) {
+      for (const item of sleepAvailable) {
+        const d = item?.date ?? item?.sleep_date ?? item?.sleepTime ?? item?.sleep_time ?? null;
+        if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) availableDates.push(d);
+      }
+    } else if (Array.isArray(sleepAvailable?.available)) {
+      for (const item of sleepAvailable.available) {
+        const d = item?.date ?? item?.sleep_date ?? null;
+        if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) availableDates.push(d);
+      }
+    }
+    sleepAvailableCount = [...new Set(availableDates)].length;
+
+    for (const date of [...new Set(availableDates)].sort()) {
+      const slDetail = await polarRequestJson(
+        POLAR_API_BASE_URL,
+        `users/sleep/${encodeURIComponent(date)}`,
+        accessToken,
+      );
+
+      const mapped = mapPolarSleepToSleepSession(userId, slDetail);
+      if (!mapped) continue;
+
+      datesTouched.add(mapped.sleep_date);
+
+      const { data: upS, error: upSErr } = await supabaseAdmin
+        .from("sleep_sessions")
+        .upsert(mapped, { onConflict: "polar_id" })
+        .select("id, polar_id")
+        .eq("polar_id", mapped.polar_id)
+        .maybeSingle();
+
+      if (upSErr) throw upSErr;
+      const sleepId = upS?.id;
+      if (!sleepId) continue;
+
+      sleepUpserted++;
+
+      // ---- stages ----
+      const stages = normalizeSleepStagesFromPolar(slDetail);
+      if (stages.length) {
+        await supabaseAdmin.from("sleep_stages").delete().eq("sleep_id", sleepId);
+
+        const rows = stages.map((st) => ({
+          user_id: userId,
+          sleep_id: sleepId,
+          stage: st.stage,
+          minutes: st.minutes,
+        }));
+
+        const ins = await supabaseAdmin.from("sleep_stages").insert(rows);
+        if (ins?.error) throw ins.error;
+      }
+
+      // ---- HR series ----
+      const hrSeries = normalizeSleepHrSamples(
+        slDetail?.heart_rate_samples,
+        mapped.sleep_start,
+      );
+
+      if (hrSeries.length) {
+        await supabaseAdmin
+          .from("sleep_hr_series")
+          .delete()
+          .eq("sleep_id", sleepId);
+
+        const rows = hrSeries.map((p) => ({
+          user_id: userId,
+          sleep_id: sleepId,
+          t_offset_sec: p.t_offset_sec,
+          hr: p.hr,
+        }));
+
+        const ins = await supabaseAdmin
+          .from("sleep_hr_series")
+          .insert(rows);
+
+        if (ins?.error) throw ins.error;
+
+        sleepHrInsertedPoints += rows.length;
+      }
+    }
+
+    // Update last_synced_at
+    const nowIso = new Date().toISOString();
+    const { error: lastErr } = await supabaseAdmin
+      .from("polar_connections")
+      .update({ last_synced_at: nowIso })
+      .eq("user_id", userId);
+
+    if (lastErr) throw lastErr;
+
+    return jsonResponse({
+      ok: true,
+      userId,
+      polarUserId,
+      workoutsUpserted,
+      sleepUpserted,
+      datesTouched: Array.from(datesTouched).sort(),
+      since: sinceDate.toISOString(),
+      syncedAt: nowIso,
+
+      // extra debug so you can see why workouts/hr might be empty
+      exerciseTxId,
+      exerciseListCount,
+      sleepAvailableCount,
+      sleepHrInsertedPoints,
+
+      note:
+        "Sleep metrics (duration, avg/min/max HR) are computed from timestamps + heart_rate_samples. Workouts may be 0 if Polar has no NEW exercises available under the v3 transaction constraints.",
+    });
+  } catch (e) {
+    return jsonResponse(
+      { ok: false, error: (e as Error)?.message ?? String(e) },
+      500,
+    );
+  }
+});
