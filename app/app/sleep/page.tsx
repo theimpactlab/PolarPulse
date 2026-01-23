@@ -1,4 +1,3 @@
-// app/app/sleep/page.tsx
 import { createSupabaseServerClient } from "@/src/lib/supabase/server";
 import SleepClient from "./ui/SleepClient";
 
@@ -12,16 +11,6 @@ function isIsoDate(v: any): v is string {
 
 function asDate(v: any): Date | null {
   if (!v) return null;
-
-  // Polar sometimes returns "YYYY-MM-DDTHH:mm:ss" without timezone.
-  // Force UTC in that case to avoid local-time skew.
-  if (typeof v === "string") {
-    const hasTz = /[zZ]|[+-]\d{2}:\d{2}$/.test(v);
-    const s = hasTz ? v : `${v}Z`;
-    const d = new Date(s);
-    return Number.isFinite(d.getTime()) ? d : null;
-  }
-
   const d = new Date(v);
   return Number.isFinite(d.getTime()) ? d : null;
 }
@@ -35,7 +24,7 @@ function minutesBetween(a: Date | null, b: Date | null): number | null {
 
 function hhmmUTC(d: Date | null): string {
   if (!d) return "–";
-  return d.toISOString().slice(11, 16);
+  return d.toISOString().slice(11, 16); // HH:MM in UTC
 }
 
 type SleepSessionRow = {
@@ -49,11 +38,12 @@ type SleepSessionRow = {
   sleep_score: number | null;
   avg_hr: number | null;
   raw: any | null;
+  created_at?: string | null;
 };
 
 type SleepStageRow = {
   stage: string;
-  minutes: number | null; // In your DB this is actually seconds
+  minutes: number | null; // IMPORTANT: in your real data this is MINUTES already
 };
 
 type SleepHrRow = {
@@ -61,11 +51,33 @@ type SleepHrRow = {
   hr: number;
 };
 
-type PageProps = {
-  searchParams?: Promise<{ date?: string }>;
-};
+type SearchParamsShape = { date?: string };
 
-export default async function SleepPage({ searchParams }: PageProps) {
+// Next.js 15 sometimes types searchParams as a Promise.
+// Accept both without fighting the framework typing.
+async function readSearchParams(searchParams: any): Promise<SearchParamsShape> {
+  if (!searchParams) return {};
+  if (typeof searchParams?.then === "function") {
+    const awaited = await searchParams;
+    return (awaited ?? {}) as SearchParamsShape;
+  }
+  return (searchParams ?? {}) as SearchParamsShape;
+}
+
+function normalizeStageMinutes(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+
+  // Heuristic:
+  // - Most real rows are already minutes (e.g. 333, 112, 46).
+  // - If you ever ingest seconds by accident, they'd likely be > 1000.
+  //   In that case, convert seconds -> minutes.
+  if (n > 1000) return Math.round(n / 60);
+
+  return Math.round(n);
+}
+
+export default async function SleepPage(props: any) {
   const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
@@ -73,48 +85,42 @@ export default async function SleepPage({ searchParams }: PageProps) {
     return <div className="text-white/80">Not signed in.</div>;
   }
 
-  const sp = (await searchParams) ?? {};
+  const sp = await readSearchParams(props?.searchParams);
   const requested = sp?.date;
   const date = isIsoDate(requested) ? requested : iso(new Date());
 
   // ------------------------------------------------------------
-  // Available dates for picker (most recent first)
+  // Build available dates list for picker (distinct sleep_date)
   // ------------------------------------------------------------
-  const { data: dateRows, error: datesErr } = await supabase
+  const { data: datesRows, error: dErr } = await supabase
     .from("sleep_sessions")
     .select("sleep_date")
     .eq("user_id", userRes.user.id)
-    .order("sleep_date", { ascending: false })
-    .limit(90);
+    .order("sleep_date", { ascending: false });
 
-  if (datesErr) {
+  if (dErr) {
     return (
       <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
         <div className="text-white/80">Failed to load sleep dates</div>
-        <div className="mt-2 text-sm text-white/50">{datesErr.message}</div>
+        <div className="mt-2 text-sm text-white/50">{dErr.message}</div>
       </div>
     );
   }
 
-  const availableDates =
-    (dateRows ?? [])
-      .map((r: any) => r.sleep_date)
-      .filter((d: any): d is string => isIsoDate(d));
-
-  const effectiveDate = availableDates.includes(date)
-    ? date
-    : (availableDates[0] ?? date);
+  const availableDates = Array.from(
+    new Set((datesRows ?? []).map((r: any) => r.sleep_date).filter(isIsoDate)),
+  );
 
   // ------------------------------------------------------------
-  // Load the sleep session for that date
+  // Load the sleep session for that date (latest created_at)
   // ------------------------------------------------------------
   const { data: session, error: sErr } = await supabase
     .from("sleep_sessions")
     .select(
-      "id,sleep_date,sleep_start,sleep_end,duration_min,time_in_bed_min,efficiency_pct,sleep_score,avg_hr,raw",
+      "id,sleep_date,sleep_start,sleep_end,duration_min,time_in_bed_min,efficiency_pct,sleep_score,avg_hr,raw,created_at",
     )
     .eq("user_id", userRes.user.id)
-    .eq("sleep_date", effectiveDate)
+    .eq("sleep_date", date)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle<SleepSessionRow>();
@@ -131,24 +137,23 @@ export default async function SleepPage({ searchParams }: PageProps) {
   if (!session) {
     return (
       <SleepClient
-        date={effectiveDate}
+        date={date}
         availableDates={availableDates}
         session={null}
-        stages={null}
+        stages={{ awake: 0, light: 0, deep: 0, rem: 0 }}
         hrPoints={[]}
       />
     );
   }
 
-  // Use explicit columns first, then fall back to raw payload
+  // Prefer explicit columns, then fall back to raw payload keys
   const startDt =
     asDate(session.sleep_start) ??
-    asDate(session.raw?.sleep_start) ??
+    asDate(session.raw?.["sleep_start"]) ??
     asDate(session.raw?.["sleep-start"]);
-
   const endDt =
     asDate(session.sleep_end) ??
-    asDate(session.raw?.sleep_end) ??
+    asDate(session.raw?.["sleep_end"]) ??
     asDate(session.raw?.["sleep-end"]);
 
   const derivedTimeInBedMin = minutesBetween(startDt, endDt);
@@ -158,6 +163,7 @@ export default async function SleepPage({ searchParams }: PageProps) {
       ? Math.round(session.duration_min)
       : derivedTimeInBedMin;
 
+  // time_in_bed_min not populated: derive it
   const timeInBedMin =
     typeof session.time_in_bed_min === "number" && session.time_in_bed_min > 0
       ? Math.round(session.time_in_bed_min)
@@ -166,13 +172,13 @@ export default async function SleepPage({ searchParams }: PageProps) {
   const efficiencyPct =
     typeof session.efficiency_pct === "number" && session.efficiency_pct > 0
       ? Math.round(session.efficiency_pct)
-      : durationMin != null && timeInBedMin != null && timeInBedMin > 0
+      : durationMin && timeInBedMin && timeInBedMin > 0
         ? Math.round((durationMin / timeInBedMin) * 100)
         : null;
 
   // ------------------------------------------------------------
-  // Load stages (DB column called "minutes" but it stores seconds)
-  // Sum seconds per stage first, then convert once (avoids rounding losses).
+  // Load stages
+  // NOTE: your column is named minutes and contains minutes already
   // ------------------------------------------------------------
   const { data: stageRows, error: stErr } = await supabase
     .from("sleep_stages")
@@ -189,7 +195,7 @@ export default async function SleepPage({ searchParams }: PageProps) {
     );
   }
 
-  const secByKey: Record<"awake" | "light" | "deep" | "rem", number> = {
+  const stageMinutesByKey: Record<"awake" | "light" | "deep" | "rem", number> = {
     awake: 0,
     light: 0,
     deep: 0,
@@ -197,21 +203,14 @@ export default async function SleepPage({ searchParams }: PageProps) {
   };
 
   for (const r of stageRows ?? []) {
-    const sec = typeof r.minutes === "number" ? r.minutes : 0;
+    const min = normalizeStageMinutes(r.minutes);
+
     const k = String(r.stage ?? "").toUpperCase();
-
-    if (k === "WAKE" || k === "AWAKE") secByKey.awake += sec;
-    else if (k === "LIGHT") secByKey.light += sec;
-    else if (k === "DEEP") secByKey.deep += sec;
-    else if (k === "REM") secByKey.rem += sec;
+    if (k === "WAKE" || k === "AWAKE") stageMinutesByKey.awake += min;
+    else if (k === "LIGHT") stageMinutesByKey.light += min;
+    else if (k === "DEEP") stageMinutesByKey.deep += min;
+    else if (k === "REM") stageMinutesByKey.rem += min;
   }
-
-  const stageMinutesByKey = {
-    awake: Math.round(secByKey.awake / 60),
-    light: Math.round(secByKey.light / 60),
-    deep: Math.round(secByKey.deep / 60),
-    rem: Math.round(secByKey.rem / 60),
-  };
 
   // ------------------------------------------------------------
   // Load HR series
@@ -252,7 +251,7 @@ export default async function SleepPage({ searchParams }: PageProps) {
 
   return (
     <SleepClient
-      date={effectiveDate}
+      date={date}
       availableDates={availableDates}
       session={{
         startTime: hhmmUTC(startDt),
