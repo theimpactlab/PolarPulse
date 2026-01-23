@@ -4,6 +4,8 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+<Link href={it.href} prefetch>
+
 type Item = {
   href: string;
   label: string;
