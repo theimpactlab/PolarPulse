@@ -65,7 +65,7 @@ export default async function SleepPage({
   // 1) explicit ?date=YYYY-MM-DD
   // 2) latest sleep_sessions.sleep_date for user
   // 3) yesterday UTC
-  let date = requestedDate;
+  let date: string = requestedDate ?? "";
 
   if (!date) {
     const { data: latest, error: latestErr } = await supabase
