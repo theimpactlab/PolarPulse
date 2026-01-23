@@ -1,6 +1,5 @@
 "use client";
 
-import React from "react";
 import React, { useMemo } from "react";
 import { RingProgress } from "@/src/components/RingProgress";
 import { SleepStagesBar } from "@/src/components/SleepStagesBar";
