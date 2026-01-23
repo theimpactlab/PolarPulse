@@ -15,3 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
+
+<div className="mx-auto max-w-md px-5 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-6">
+  {children}
+</div>

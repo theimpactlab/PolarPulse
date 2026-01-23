@@ -66,6 +66,11 @@ export default function MobileBottomNav() {
         "border-t border-white/10 bg-black/80 backdrop-blur",
         "pb-[env(safe-area-inset-bottom)]",
       ].join(" ")}
+      "className={[
+        ...,
+        'active:scale-[0.98] active:bg-white/15',
+        'transition-transform'
+      ].join(' ')}"
     >
       <div className="mx-auto grid h-20 max-w-md grid-cols-4 gap-2 px-3 py-3">
         {items.map((it) => {
