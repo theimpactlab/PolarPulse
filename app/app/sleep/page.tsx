@@ -77,6 +77,10 @@ function normalizeStageMinutes(v: unknown): number {
   return Math.round(n);
 }
 
+function clampPct(n: number) {
+  return Math.max(0, Math.min(100, n));
+}
+
 export default async function SleepPage(props: any) {
   const supabase = await createSupabaseServerClient();
 
@@ -169,24 +173,8 @@ export default async function SleepPage(props: any) {
       ? Math.round(session.time_in_bed_min)
       : derivedTimeInBedMin;
 
-    // Total "asleep" minutes = light + deep + rem (exclude awake)
-  const asleepMin =
-    (stageMinutesByKey.light ?? 0) +
-    (stageMinutesByKey.deep ?? 0) +
-    (stageMinutesByKey.rem ?? 0);
-
-  // Efficiency = asleep / duration * 100
-  // (falls back to existing session.efficiency_pct if present and sensible)
-  const efficiencyPct =
-    typeof session.efficiency_pct === "number" && session.efficiency_pct > 0
-      ? Math.round(session.efficiency_pct)
-      : durationMin && durationMin > 0
-        ? Math.round((asleepMin / durationMin) * 100)
-        : null;
-
   // ------------------------------------------------------------
-  // Load stages
-  // NOTE: your column is named minutes and contains minutes already
+  // Load stages (minutes column is minutes already in your current backend)
   // ------------------------------------------------------------
   const { data: stageRows, error: stErr } = await supabase
     .from("sleep_stages")
@@ -212,13 +200,28 @@ export default async function SleepPage(props: any) {
 
   for (const r of stageRows ?? []) {
     const min = normalizeStageMinutes(r.minutes);
-
     const k = String(r.stage ?? "").toUpperCase();
     if (k === "WAKE" || k === "AWAKE") stageMinutesByKey.awake += min;
     else if (k === "LIGHT") stageMinutesByKey.light += min;
     else if (k === "DEEP") stageMinutesByKey.deep += min;
     else if (k === "REM") stageMinutesByKey.rem += min;
   }
+
+  // ------------------------------------------------------------
+  // Efficiency (requested improvement)
+  // (light + deep + rem) / duration * 100
+  // ------------------------------------------------------------
+  const asleepMin =
+    (stageMinutesByKey.light ?? 0) +
+    (stageMinutesByKey.deep ?? 0) +
+    (stageMinutesByKey.rem ?? 0);
+
+  const efficiencyPct =
+    typeof session.efficiency_pct === "number" && session.efficiency_pct > 0
+      ? Math.round(session.efficiency_pct)
+      : durationMin && durationMin > 0
+        ? clampPct(Math.round((asleepMin / durationMin) * 100))
+        : null;
 
   // ------------------------------------------------------------
   // Load HR series
