@@ -13,17 +13,24 @@ function sanitizeNext(nextRaw: string | null): string {
   return n;
 }
 
+function appOrigin(): string {
+  return (
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (typeof window !== "undefined" ? window.location.origin : "")
+  );
+}
+
 function prettyAuthError(err: any): string {
-  const msg = (err?.message || "").toString().toLowerCase();
+  const raw = (err?.message || "").toString();
+  const msg = raw.toLowerCase();
 
   if (!msg) return "Something went wrong. Please try again.";
 
-  // Common Supabase Auth messages
   if (msg.includes("invalid login credentials")) {
     return "That email/password combination didn’t work.";
   }
   if (msg.includes("email not confirmed")) {
-    return "Your email isn’t confirmed yet. Check your inbox (or spam) for the confirmation email.";
+    return "Your email isn’t confirmed yet. Check your inbox (and spam) for a confirmation email.";
   }
   if (msg.includes("user not found")) {
     return "No account found for that email address.";
@@ -34,9 +41,11 @@ function prettyAuthError(err: any): string {
   if (msg.includes("otp") && msg.includes("expired")) {
     return "That sign-in link has expired. Please request a new one.";
   }
+  if (msg.includes("redirect") && msg.includes("url")) {
+    return "Login redirect URL is not allowed. Check your Supabase Auth URL settings.";
+  }
 
-  // Default fallback
-  return err?.message || "Something went wrong. Please try again.";
+  return raw || "Something went wrong. Please try again.";
 }
 
 export default function LoginClient() {
@@ -51,6 +60,8 @@ export default function LoginClient() {
   const [status, setStatus] = useState<"idle" | "working" | "success" | "error">("idle");
   const [msg, setMsg] = useState<string>("");
 
+  const disabled = status === "working";
+
   async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
     setStatus("working");
@@ -60,7 +71,7 @@ export default function LoginClient() {
       const supabase = createSupabaseBrowserClient();
 
       const { error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
@@ -68,7 +79,8 @@ export default function LoginClient() {
 
       setStatus("success");
       setMsg("Signed in. Redirecting…");
-      router.push(nextPath);
+
+      router.replace(nextPath);
       router.refresh();
     } catch (err: any) {
       setStatus("error");
@@ -76,26 +88,20 @@ export default function LoginClient() {
     }
   }
 
-    async function sendMagicLink(e: React.FormEvent) {
+  async function sendMagicLink(e: React.FormEvent) {
     e.preventDefault();
     setStatus("working");
     setMsg("");
 
     try {
       const supabase = createSupabaseBrowserClient();
+      const origin = appOrigin();
 
-      const origin = window.location.origin;
-
-      // IMPORTANT: pick the one that matches your route file location
-      // If your route is app/auth/callback/route.ts:
-      // const callbackPath = "/auth/callback";
-      // If instead it's app/app/auth/callback/route.ts, use:
-      const callbackPath = "/app/auth/callback";
-
-      const redirectTo = `${origin}${callbackPath}?next=${encodeURIComponent(nextPath)}`;
+      // Keep using your existing callback route for OTP exchange
+      const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(nextPath)}`;
 
       const { error } = await supabase.auth.signInWithOtp({
-        email,
+        email: email.trim(),
         options: { emailRedirectTo: redirectTo },
       });
 
@@ -109,7 +115,31 @@ export default function LoginClient() {
     }
   }
 
-  const disabled = status === "working";
+  async function sendResetEmail() {
+    setStatus("working");
+    setMsg("");
+
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const origin = appOrigin();
+
+      // This must match your reset page route:
+      // app/auth/reset/page.tsx
+      const redirectTo = `${origin}/auth/reset?next=${encodeURIComponent(nextPath)}`;
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo,
+      });
+
+      if (error) throw error;
+
+      setStatus("success");
+      setMsg("Password reset email sent. Open it to set your password.");
+    } catch (err: any) {
+      setStatus("error");
+      setMsg(prettyAuthError(err));
+    }
+  }
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-950 to-zinc-900 px-5 py-10 text-white">
@@ -118,9 +148,7 @@ export default function LoginClient() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
-              <p className="mt-2 text-white/60">
-                Use your password, or request a magic link.
-              </p>
+              <p className="mt-2 text-white/60">Use your password, or request a link.</p>
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-black/20 p-1 text-xs">
@@ -194,6 +222,23 @@ export default function LoginClient() {
                   : "Send magic link"}
             </button>
           </form>
+
+          {mode === "password" && (
+            <div className="mt-3 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={sendResetEmail}
+                disabled={disabled || !email.trim()}
+                className="text-xs text-white/60 hover:text-white disabled:opacity-50"
+              >
+                Forgot password?
+              </button>
+
+              <div className="text-xs text-white/35">
+                Reset sends you to <span className="text-white/50">/auth/reset</span>
+              </div>
+            </div>
+          )}
 
           {msg && (
             <div
