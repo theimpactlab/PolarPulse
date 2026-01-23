@@ -6,5 +6,11 @@ export function createSupabaseBrowserClient() {
 
   if (!url || !anon) throw new Error("Missing Supabase env vars in NEXT_PUBLIC_...");
 
-  return createBrowserClient(url, anon);
+  return createBrowserClient(url, anon, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
 }

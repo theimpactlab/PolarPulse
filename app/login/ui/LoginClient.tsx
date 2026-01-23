@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import React, { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/src/lib/supabase/client";
 
 function sanitizeNext(nextRaw: string | null): string {
@@ -13,17 +13,72 @@ function sanitizeNext(nextRaw: string | null): string {
   return n;
 }
 
+function prettyAuthError(err: any): string {
+  const msg = (err?.message || "").toString().toLowerCase();
+
+  if (!msg) return "Something went wrong. Please try again.";
+
+  // Common Supabase Auth messages
+  if (msg.includes("invalid login credentials")) {
+    return "That email/password combination didn’t work.";
+  }
+  if (msg.includes("email not confirmed")) {
+    return "Your email isn’t confirmed yet. Check your inbox (or spam) for the confirmation email.";
+  }
+  if (msg.includes("user not found")) {
+    return "No account found for that email address.";
+  }
+  if (msg.includes("rate limit") || msg.includes("too many requests")) {
+    return "Too many attempts. Please wait a minute and try again.";
+  }
+  if (msg.includes("otp") && msg.includes("expired")) {
+    return "That sign-in link has expired. Please request a new one.";
+  }
+
+  // Default fallback
+  return err?.message || "Something went wrong. Please try again.";
+}
+
 export default function LoginClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const nextPath = useMemo(() => sanitizeNext(searchParams.get("next")), [searchParams]);
 
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [password, setPassword] = useState("");
+
+  const [mode, setMode] = useState<"password" | "magic">("password");
+  const [status, setStatus] = useState<"idle" | "working" | "success" | "error">("idle");
   const [msg, setMsg] = useState<string>("");
 
-  async function sendLink(e: React.FormEvent) {
+  async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
-    setStatus("sending");
+    setStatus("working");
+    setMsg("");
+
+    try {
+      const supabase = createSupabaseBrowserClient();
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+
+      setStatus("success");
+      setMsg("Signed in. Redirecting…");
+      router.push(nextPath);
+      router.refresh();
+    } catch (err: any) {
+      setStatus("error");
+      setMsg(prettyAuthError(err));
+    }
+  }
+
+  async function sendMagicLink(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus("working");
     setMsg("");
 
     try {
@@ -42,22 +97,62 @@ export default function LoginClient() {
 
       if (error) throw error;
 
-      setStatus("sent");
+      setStatus("success");
       setMsg("Magic link sent. Check your email.");
     } catch (err: any) {
       setStatus("error");
-      setMsg(err?.message || "Could not send magic link.");
+      setMsg(prettyAuthError(err));
     }
   }
+
+  const disabled = status === "working";
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-zinc-950 via-zinc-950 to-zinc-900 px-5 py-10 text-white">
       <div className="mx-auto max-w-md">
         <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-xl backdrop-blur">
-          <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
-          <p className="mt-2 text-white/60">Enter your email and we’ll send you a sign-in link.</p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
+              <p className="mt-2 text-white/60">
+                Use your password, or request a magic link.
+              </p>
+            </div>
 
-          <form onSubmit={sendLink} className="mt-6 space-y-3">
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-1 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("password");
+                  setStatus("idle");
+                  setMsg("");
+                }}
+                className={`rounded-xl px-3 py-2 ${
+                  mode === "password" ? "bg-white/10 text-white" : "text-white/60 hover:text-white"
+                }`}
+              >
+                Password
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("magic");
+                  setStatus("idle");
+                  setMsg("");
+                }}
+                className={`rounded-xl px-3 py-2 ${
+                  mode === "magic" ? "bg-white/10 text-white" : "text-white/60 hover:text-white"
+                }`}
+              >
+                Magic link
+              </button>
+            </div>
+          </div>
+
+          <form
+            onSubmit={mode === "password" ? signInWithPassword : sendMagicLink}
+            className="mt-6 space-y-3"
+          >
             <input
               type="email"
               inputMode="email"
@@ -67,19 +162,43 @@ export default function LoginClient() {
               onChange={(e) => setEmail(e.target.value)}
               className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none focus:border-white/20"
               required
+              disabled={disabled}
             />
+
+            {mode === "password" && (
+              <input
+                type="password"
+                autoComplete="current-password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none focus:border-white/20"
+                required
+                disabled={disabled}
+              />
+            )}
 
             <button
               type="submit"
-              disabled={status === "sending"}
+              disabled={disabled || (mode === "password" && password.length < 1)}
               className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-medium hover:bg-white/15 disabled:opacity-60"
             >
-              {status === "sending" ? "Sending…" : "Send magic link"}
+              {status === "working"
+                ? "Working…"
+                : mode === "password"
+                  ? "Sign in"
+                  : "Send magic link"}
             </button>
           </form>
 
           {msg && (
-            <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/70">
+            <div
+              className={`mt-4 rounded-2xl border p-3 text-sm ${
+                status === "error"
+                  ? "border-red-500/30 bg-red-500/10 text-red-100/90"
+                  : "border-white/10 bg-black/20 text-white/70"
+              }`}
+            >
               {msg}
             </div>
           )}
@@ -87,6 +206,11 @@ export default function LoginClient() {
           <div className="mt-6 text-xs text-white/40">
             After signing in you will be redirected to{" "}
             <span className="text-white/60">{nextPath}</span>
+          </div>
+
+          <div className="mt-4 text-xs text-white/40">
+            Tip: If you use password sign-in on Apple devices, Safari/iCloud Keychain can unlock
+            saved passwords with Face ID/Touch ID.
           </div>
         </div>
       </div>

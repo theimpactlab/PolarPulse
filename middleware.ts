@@ -12,7 +12,6 @@ export async function middleware(req: NextRequest) {
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
   const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-
   if (!supabaseUrl || !supabaseAnon) return res;
 
   const supabase = createServerClient(supabaseUrl, supabaseAnon, {
@@ -28,6 +27,11 @@ export async function middleware(req: NextRequest) {
     },
   });
 
+  // Refresh session if needed and update cookies on the response
+  // (This is the key to "staying logged in".)
+  await supabase.auth.getClaims();
+
+  // Now check if the user is actually signed in
   const {
     data: { user },
   } = await supabase.auth.getUser();

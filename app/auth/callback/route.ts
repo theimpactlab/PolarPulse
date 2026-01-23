@@ -8,10 +8,19 @@ type CookieToSet = {
   options?: Parameters<NextResponse["cookies"]["set"]>[2];
 };
 
+function sanitizeNext(nextRaw: string | null): string {
+  const fallback = "/app/dashboard";
+  if (!nextRaw) return fallback;
+  const n = nextRaw.trim();
+  if (!n.startsWith("/")) return fallback;
+  if (!n.startsWith("/app")) return fallback;
+  return n;
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
-  const next = url.searchParams.get("next") || "/app/dashboard";
+  const next = sanitizeNext(url.searchParams.get("next"));
 
   if (!code) {
     return NextResponse.redirect(

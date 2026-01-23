@@ -30,9 +30,16 @@ export async function createSupabaseServerClient() {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(_cookiesToSet: CookieToSet[]) {
-        // Server Components can't set cookies directly.
-        // Middleware handles refresh + cookie writes.
+      setAll(cookiesToSet: CookieToSet[]) {
+        // In Server Components, this can throw (cookies are read-only).
+        // In Route Handlers / Server Actions, it will succeed.
+        try {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set(name, value, options);
+          });
+        } catch {
+          // Ignore in Server Components
+        }
       },
     },
   });
