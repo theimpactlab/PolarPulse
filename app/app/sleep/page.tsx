@@ -1,5 +1,5 @@
-import { createSupabaseServerClient } from "@/src/lib/supabase/server";
 import SleepClient from "./ui/SleepClient";
+import { createSupabaseServerClient } from "@/src/lib/supabase/server";
 
 function iso(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -12,7 +12,8 @@ export default async function SleepPage({
 }) {
   const sp = await searchParams;
 
-  const supabase = createSupabaseServerClient();
+  // ✅ IMPORTANT: this returns a Promise in your project, so it must be awaited
+  const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
   if (uErr || !userRes.user) {
