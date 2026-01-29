@@ -22,7 +22,7 @@ export default function MobileBottomNav() {
       href: "/app/dashboard",
       label: "Dashboard",
       icon: (
-        <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg viewBox="0 0 24 24" className="h-10 w-6" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M3 13h8V3H3v10zM13 21h8V11h-8v10zM13 3h8v6h-8V3zM3 17h8v4H3v-4z" />
         </svg>
       ),
@@ -31,7 +31,7 @@ export default function MobileBottomNav() {
       href: "/app/sleep",
       label: "Sleep",
       icon: (
-        <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg viewBox="0 0 24 24" className="h-10 w-6" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M7 3h10v6H7z" />
           <path d="M5 9h14a2 2 0 0 1 2 2v6a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4v-6a2 2 0 0 1 2-2z" />
           <path d="M8 13h.01M12 13h.01M16 13h.01" />
@@ -42,7 +42,7 @@ export default function MobileBottomNav() {
       href: "/app/activity",
       label: "Activity",
       icon: (
-        <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg viewBox="0 0 24 24" className="h-10 w-6" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M3 12h4l2-7 4 14 2-7h6" />
         </svg>
       ),
@@ -51,7 +51,7 @@ export default function MobileBottomNav() {
       href: "/app/profile",
       label: "Profile",
       icon: (
-        <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg viewBox="0 0 24 24" className="h-10 w-6" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M20 21a8 8 0 1 0-16 0" />
           <circle cx="12" cy="8" r="4" />
         </svg>
