@@ -12,7 +12,7 @@ export default async function SleepPage({
 }) {
   const sp = await searchParams;
 
-  // ✅ IMPORTANT: this returns a Promise in your project, so it must be awaited
+  // In your project this returns a Promise, so it must be awaited.
   const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
@@ -30,29 +30,16 @@ export default async function SleepPage({
       ? sp.date
       : iso(yday);
 
-  // --- Daily metrics (sleep score fallback) ---
-  const { data: dm, error: dmErr } = await supabase
-    .from("daily_metrics")
-    .select("date,sleep_score")
-    .eq("date", selectedDate)
-    .maybeSingle();
-
-  if (dmErr) {
-    return (
-      <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-        <div className="text-white/80">Failed to load daily metrics</div>
-        <div className="mt-2 text-sm text-white/50">{dmErr.message}</div>
-      </div>
-    );
-  }
-
-  // --- Sleep session (longest if multiple) ---
-  const { data: sessions, error: sErr } = await supabase
+  // 1) Get the sleep session for this date (this is the only table with sleep_date)
+  const { data: sessionRow, error: sErr } = await supabase
     .from("sleep_sessions")
-    .select("sleep_start,sleep_end,duration_min,efficiency_pct,sleep_score")
+    .select(
+      "id,sleep_start,sleep_end,duration_min,efficiency_pct,sleep_score,sleep_date"
+    )
     .eq("sleep_date", selectedDate)
-    .order("duration_min", { ascending: false })
-    .limit(1);
+    .order("sleep_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (sErr) {
     return (
@@ -63,13 +50,26 @@ export default async function SleepPage({
     );
   }
 
-  const session = sessions?.[0] ?? null;
+  // If there is no session for that date, render empty UI safely
+  if (!sessionRow) {
+    return (
+      <SleepClient
+        date={selectedDate}
+        sleepScore={null}
+        session={null}
+        stages={[]}
+        hrSeries={[]}
+      />
+    );
+  }
 
-  // --- Sleep stages ---
-  const { data: stagesRows, error: stErr } = await supabase
+  const sleepSessionId = sessionRow.id as string | number;
+
+  // 2) Stages are keyed by sleep_session_id (not sleep_date)
+  const { data: stageRows, error: stErr } = await supabase
     .from("sleep_stages")
     .select("stage,minutes")
-    .eq("sleep_date", selectedDate);
+    .eq("sleep_session_id", sleepSessionId);
 
   if (stErr) {
     return (
@@ -80,12 +80,12 @@ export default async function SleepPage({
     );
   }
 
-  // --- HR series during sleep ---
+  // 3) HR series is keyed by sleep_session_id and uses offset_sec
   const { data: hrRows, error: hrErr } = await supabase
     .from("sleep_hr_series")
-    .select("t_offset_sec,hr")
-    .eq("sleep_date", selectedDate)
-    .order("t_offset_sec", { ascending: true });
+    .select("offset_sec,hr")
+    .eq("sleep_session_id", sleepSessionId)
+    .order("offset_sec", { ascending: true });
 
   if (hrErr) {
     return (
@@ -99,11 +99,21 @@ export default async function SleepPage({
   return (
     <SleepClient
       date={selectedDate}
-      sleepScore={(session?.sleep_score ?? dm?.sleep_score) ?? null}
-      session={session}
-      stages={stagesRows ?? []}
+      sleepScore={sessionRow.sleep_score ?? null}
+      session={{
+        sleep_start: sessionRow.sleep_start ?? null,
+        sleep_end: sessionRow.sleep_end ?? null,
+        duration_min: sessionRow.duration_min ?? null,
+        efficiency_pct: sessionRow.efficiency_pct ?? null,
+        sleep_score: sessionRow.sleep_score ?? null,
+      }}
+      stages={(stageRows ?? []).map((r) => ({
+        stage: r.stage,
+        minutes: r.minutes,
+      }))}
       hrSeries={(hrRows ?? []).map((r) => ({
-        t: r.t_offset_sec,
+        // Convert sec -> minutes for chart x-axis (keep as number)
+        t: typeof r.offset_sec === "number" ? r.offset_sec / 60 : 0,
         hr: r.hr,
       }))}
     />
