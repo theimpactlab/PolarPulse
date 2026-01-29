@@ -83,9 +83,9 @@ export default async function SleepPage({
   // --- HR series during sleep ---
   const { data: hrRows, error: hrErr } = await supabase
     .from("sleep_hr_series")
-    .select("t_offset_min,hr")
+    .select("t_offset_sec,hr")
     .eq("sleep_date", selectedDate)
-    .order("t_offset_min", { ascending: true });
+    .order("t_offset_sec", { ascending: true });
 
   if (hrErr) {
     return (
@@ -103,7 +103,7 @@ export default async function SleepPage({
       session={session}
       stages={stagesRows ?? []}
       hrSeries={(hrRows ?? []).map((r) => ({
-        t: r.t_offset_min,
+        t: r.t_offset_sec,
         hr: r.hr,
       }))}
     />
