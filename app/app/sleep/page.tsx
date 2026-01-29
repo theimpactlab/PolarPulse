@@ -144,7 +144,12 @@ export default async function SleepPage(props: any) {
         date={date}
         availableDates={availableDates}
         session={null}
-        stages={{ awake: 0, light: 0, deep: 0, rem: 0 }}
+        stages={[
+          { stage: "awake", minutes: 0 },
+          { stage: "light", minutes: 0 },
+          { stage: "deep", minutes: 0 },
+          { stage: "rem", minutes: 0 },
+        ]}
         hrPoints={[]}
       />
     );
