@@ -142,7 +142,7 @@ export default async function SleepPage(props: any) {
     return (
       <SleepClient
         date={date}
-        availableDates={availableDates}
+        sleepScore={sleepScore ?? null}
         session={null}
         stages={[
           { stage: "awake", minutes: 0 },
@@ -150,7 +150,7 @@ export default async function SleepPage(props: any) {
           { stage: "deep", minutes: 0 },
           { stage: "rem", minutes: 0 },
         ]}
-        hrPoints={[]}
+        hrSeries={[]}
       />
     );
   }
