@@ -12,7 +12,6 @@ export default async function SleepPage({
 }) {
   const sp = await searchParams;
 
-  // In your project this returns a Promise, so it must be awaited.
   const supabase = await createSupabaseServerClient();
 
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
@@ -30,12 +29,10 @@ export default async function SleepPage({
       ? sp.date
       : iso(yday);
 
-  // 1) Get the sleep session for this date (this is the only table with sleep_date)
+  // 1) sleep_sessions is keyed by sleep_date
   const { data: sessionRow, error: sErr } = await supabase
     .from("sleep_sessions")
-    .select(
-      "id,sleep_start,sleep_end,duration_min,efficiency_pct,sleep_score,sleep_date"
-    )
+    .select("id,sleep_start,sleep_end,duration_min,efficiency_pct,sleep_score,sleep_date")
     .eq("sleep_date", selectedDate)
     .order("sleep_start", { ascending: false })
     .limit(1)
@@ -50,7 +47,6 @@ export default async function SleepPage({
     );
   }
 
-  // If there is no session for that date, render empty UI safely
   if (!sessionRow) {
     return (
       <SleepClient
@@ -63,13 +59,13 @@ export default async function SleepPage({
     );
   }
 
-  const sleepSessionId = sessionRow.id as string | number;
+  const sleepId = sessionRow.id;
 
-  // 2) Stages are keyed by sleep_session_id (not sleep_date)
+  // 2) sleep_stages joins via sleep_id (not sleep_session_id)
   const { data: stageRows, error: stErr } = await supabase
     .from("sleep_stages")
     .select("stage,minutes")
-    .eq("sleep_session_id", sleepSessionId);
+    .eq("sleep_id", sleepId);
 
   if (stErr) {
     return (
@@ -80,11 +76,11 @@ export default async function SleepPage({
     );
   }
 
-  // 3) HR series is keyed by sleep_session_id and uses offset_sec
+  // 3) sleep_hr_series likely also joins via sleep_id and uses offset_sec
   const { data: hrRows, error: hrErr } = await supabase
     .from("sleep_hr_series")
     .select("offset_sec,hr")
-    .eq("sleep_session_id", sleepSessionId)
+    .eq("sleep_id", sleepId)
     .order("offset_sec", { ascending: true });
 
   if (hrErr) {
@@ -112,7 +108,7 @@ export default async function SleepPage({
         minutes: r.minutes,
       }))}
       hrSeries={(hrRows ?? []).map((r) => ({
-        // Convert sec -> minutes for chart x-axis (keep as number)
+        // Convert sec -> minutes for chart x-axis
         t: typeof r.offset_sec === "number" ? r.offset_sec / 60 : 0,
         hr: r.hr,
       }))}
