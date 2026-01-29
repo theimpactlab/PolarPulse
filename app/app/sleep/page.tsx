@@ -79,9 +79,9 @@ export default async function SleepPage({
   // 3) sleep_hr_series likely also joins via sleep_id and uses offset_sec
   const { data: hrRows, error: hrErr } = await supabase
     .from("sleep_hr_series")
-    .select("offset_sec,hr")
+    .select("t_offset_sec,hr")
     .eq("sleep_id", sleepId)
-    .order("offset_sec", { ascending: true });
+    .order("t_offset_sec", { ascending: true });
 
   if (hrErr) {
     return (
@@ -109,7 +109,7 @@ export default async function SleepPage({
       }))}
       hrSeries={(hrRows ?? []).map((r) => ({
         // Convert sec -> minutes for chart x-axis
-        t: typeof r.offset_sec === "number" ? r.offset_sec / 60 : 0,
+        t: typeof r.t_offset_sec === "number" ? r.t_offset_sec / 60 : 0,
         hr: r.hr,
       }))}
     />
