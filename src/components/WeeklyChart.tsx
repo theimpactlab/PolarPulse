@@ -30,7 +30,7 @@ export const WeeklyChart: React.FC<WeeklyChartProps> = ({
       .filter((v) => v !== null && v !== undefined) as number[];
 
     if (validValues.length === 0) {
-      return { points: [], min: 0, max: 1, currentValue: null };
+      return { points: [], min: 0, max: 1, currentValue: null, range: 0 };
     }
 
     const min = Math.min(...validValues);
