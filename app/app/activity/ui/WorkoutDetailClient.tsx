@@ -21,6 +21,7 @@ type Props = {
     distanceM: number | null;
     avgHr: number | null;
     maxHr: number | null;
+    trainingLoad: number | null;
   };
   hrPoints: Array<{ t: number; hr: number }>;
   zones: { z1: number; z2: number; z3: number; z4: number; z5: number };
@@ -87,70 +88,70 @@ export default function WorkoutDetailClient({ workout, hrPoints, zones }: Props)
                 : `${Math.floor(paceMinPerKm)}:${String(Math.round((paceMinPerKm % 1) * 60)).padStart(2, "0")} /km`
             }
           />
-          <Tile label="Load" value="–" hint="(wire this once training-load exists in DB)" />
+          <Tile label="Load" value={workout.trainingLoad == null ? "–" : fmt1(workout.trainingLoad)} />
+        </div>
+      </div>
+
+      {/* Heart rate chart */}
+      <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
+        <div className="mb-2 flex items-baseline justify-between">
+          <div className="text-sm font-medium text-white/80">Heart Rate</div>
+          <div className="text-xs text-white/45">minutes</div>
         </div>
 
-        {/* Heart rate chart */}
-        <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
-          <div className="mb-2 flex items-baseline justify-between">
-            <div className="text-sm font-medium text-white/80">Heart Rate</div>
-            <div className="text-xs text-white/45">minutes</div>
-          </div>
+        <div className="h-44 w-full">
+          {chartData.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-white/50">
+              No heart rate series for this workout.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData}>
+                <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                <XAxis dataKey="t" tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} />
+                <YAxis tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} width={30} />
+                <Tooltip
+                  contentStyle={{
+                    background: "rgba(0,0,0,0.85)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 14,
+                  }}
+                  labelStyle={{ color: "rgba(255,255,255,0.75)" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="hr"
+                  stroke="rgba(255,255,255,0.9)"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
 
-          <div className="h-44 w-full">
-            {chartData.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-sm text-white/50">
-                No heart rate series for this workout.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
-                  <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-                  <XAxis dataKey="t" tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} />
-                  <YAxis tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} width={30} />
-                  <Tooltip
-                    contentStyle={{
-                      background: "rgba(0,0,0,0.85)",
-                      border: "1px solid rgba(255,255,255,0.12)",
-                      borderRadius: 14,
-                    }}
-                    labelStyle={{ color: "rgba(255,255,255,0.75)" }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="hr"
-                    stroke="rgba(255,255,255,0.9)"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+      {/* HR Zones */}
+      <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium text-white/80">Heart Rate Zones</div>
+          <div className="text-xs text-white/45">{Math.round(zoneTotal)} min</div>
         </div>
 
-        {/* HR Zones */}
-        <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-medium text-white/80">Heart Rate Zones</div>
-            <div className="text-xs text-white/45">{Math.round(zoneTotal)} min</div>
-          </div>
+        <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-white/10">
+          <span className="inline-block h-full bg-white/25" style={{ width: `${zonePct(zones.z1)}%` }} />
+          <span className="inline-block h-full bg-white/35" style={{ width: `${zonePct(zones.z2)}%` }} />
+          <span className="inline-block h-full bg-white/45" style={{ width: `${zonePct(zones.z3)}%` }} />
+          <span className="inline-block h-full bg-white/55" style={{ width: `${zonePct(zones.z4)}%` }} />
+          <span className="inline-block h-full bg-white/65" style={{ width: `${zonePct(zones.z5)}%` }} />
+        </div>
 
-          <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-white/10">
-            <span className="inline-block h-full bg-white/25" style={{ width: `${zonePct(zones.z1)}%` }} />
-            <span className="inline-block h-full bg-white/35" style={{ width: `${zonePct(zones.z2)}%` }} />
-            <span className="inline-block h-full bg-white/45" style={{ width: `${zonePct(zones.z3)}%` }} />
-            <span className="inline-block h-full bg-white/55" style={{ width: `${zonePct(zones.z4)}%` }} />
-            <span className="inline-block h-full bg-white/65" style={{ width: `${zonePct(zones.z5)}%` }} />
-          </div>
-
-          <div className="mt-3 grid grid-cols-5 gap-2">
-            <ZoneCard label="Z1" minutes={zones.z1} />
-            <ZoneCard label="Z2" minutes={zones.z2} />
-            <ZoneCard label="Z3" minutes={zones.z3} />
-            <ZoneCard label="Z4" minutes={zones.z4} />
-            <ZoneCard label="Z5" minutes={zones.z5} />
-          </div>
+        <div className="mt-3 grid grid-cols-5 gap-2">
+          <ZoneCard label="Z1" minutes={zones.z1} />
+          <ZoneCard label="Z2" minutes={zones.z2} />
+          <ZoneCard label="Z3" minutes={zones.z3} />
+          <ZoneCard label="Z4" minutes={zones.z4} />
+          <ZoneCard label="Z5" minutes={zones.z5} />
         </div>
       </div>
     </div>
