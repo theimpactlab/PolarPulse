@@ -81,10 +81,12 @@ export default function DashboardClient({
   rows,
   recharge,
   baselines,
+  sleepGotMin,
 }: {
   rows: Row[];
   recharge: Recharge;
   baselines: Baseline[];
+  sleepGotMin: number | null;
 }) {
   const today = rows.length ? rows[rows.length - 1] : null;
 
@@ -199,7 +201,7 @@ export default function DashboardClient({
       {/* Sleep Coach */}
       <div className="mb-5">
         <SleepCoach
-          sleepGotMin={null}
+          sleepGotMin={sleepGotMin}
           sleepNeededMin={today?.sleep_needed_min ?? null}
           sleepDebtMin={today?.sleep_debt_min ?? null}
           sleepPerformancePct={today?.sleep_performance_pct ?? null}
@@ -210,18 +212,18 @@ export default function DashboardClient({
       <div className="grid grid-cols-2 gap-3 mb-5">
         <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
           <div className="text-xs text-white/50">Steps</div>
-          <div className="mt-1 text-xl font-semibold tabular-nums">{today?.steps ?? "–"}</div>
+          <div className="mt-1 text-xl font-semibold tabular-nums">{today?.steps ?? "â"}</div>
         </div>
         <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
           <div className="text-xs text-white/50">Active Calories</div>
-          <div className="mt-1 text-xl font-semibold tabular-nums">{today?.active_calories ?? "–"}</div>
+          <div className="mt-1 text-xl font-semibold tabular-nums">{today?.active_calories ?? "â"}</div>
         </div>
       </div>
 
       {/* 14-day Trend Chart */}
       <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-xl backdrop-blur">
         <div className="mb-2 flex items-baseline justify-between">
-          <div className="text-sm font-medium text-white/80">Recovery · Strain · Sleep</div>
+          <div className="text-sm font-medium text-white/80">Recovery Â· Strain Â· Sleep</div>
           <div className="text-xs text-white/45">14 days</div>
         </div>
 
