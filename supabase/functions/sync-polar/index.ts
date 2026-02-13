@@ -2,14 +2,16 @@
 // Deploy: supabase functions deploy sync-polar
 //
 // Purpose
-// - Pull latest workouts + sleep from Polar (AccessLink) since last_synced_at
+// - Pull latest workouts, sleep, nightly recharge, activity summary, and continuous HR from Polar (AccessLink) since last_synced_at
 // - Upsert into: workouts, workout_hr_series, workout_hr_zones
 //                sleep_sessions, sleep_stages, sleep_hr_series
+//                nightly_recharge, continuous_hr, daily_metrics
+// - Compute strain_21, sleep coach metrics, and strain targets
 // - Return counts + list of dates touched
 //
 // Notes
 // - This function is intentionally defensive and configurable because Polar endpoints/payloads differ
-//   depending on what you’ve enabled in AccessLink.
+//   depending on what you've enabled in AccessLink.
 // - You can run it in two modes:
 //   1) User mode: called from the web app with a user JWT (syncs the caller)
 //   2) Service mode: called with x-sync-secret header to sync a specified userId
@@ -29,6 +31,7 @@
 // Tables expected (from your SQL):
 // - polar_connections, workouts, workout_hr_series, workout_hr_zones
 // - sleep_sessions, sleep_stages, sleep_hr_series
+// - nightly_recharge, continuous_hr, daily_metrics
 //
 // IMPORTANT
 // - polar_connections has RLS enabled with no policies, so we MUST use service role client to read/write it.
@@ -281,6 +284,98 @@ function mapPolarSleepToSleepSession(userId: string, s: any): SleepUpsert | null
   };
 }
 
+type NightlyRechargeUpsert = {
+  user_id: string;
+  polar_id: string;
+  date: string;
+  ans_charge?: number | null;
+  ans_charge_status?: string | null;
+  hrv_avg?: number | null;
+  hrv_max?: number | null;
+  hr_avg?: number | null;
+  hr_min?: number | null;
+  breathing_rate_avg?: number | null;
+  beat_to_beat_avg?: number | null;
+  raw?: any;
+};
+
+function mapPolarNightlyRechargeToUpsert(userId: string, data: any): NightlyRechargeUpsert | null {
+  const polarId = String(data?.id ?? data?.polar_id ?? data?.nightly_recharge_id ?? "");
+  const dateStr = data?.date ?? data?.created ?? null;
+  const date = dateOnlyFromIso(dateStr);
+
+  if (!polarId || !date) return null;
+
+  return {
+    user_id: userId,
+    polar_id: polarId,
+    date,
+    ans_charge: asInt(data?.ans_charge ?? data?.ansCharge ?? null),
+    ans_charge_status: data?.ans_charge_status ?? data?.ansChargeStatus ?? null,
+    hrv_avg: asFloat(data?.hrv_avg ?? data?.hrvAverage ?? data?.hrv_average ?? null),
+    hrv_max: asFloat(data?.hrv_max ?? data?.hrvMax ?? null),
+    hr_avg: asFloat(data?.hr_avg ?? data?.hrAverage ?? data?.hr_average ?? null),
+    hr_min: asFloat(data?.hr_min ?? data?.hrMin ?? null),
+    breathing_rate_avg: asFloat(data?.breathing_rate_avg ?? data?.breathingRateAverage ?? null),
+    beat_to_beat_avg: asFloat(data?.beat_to_beat_avg ?? data?.beatToBeatAverage ?? null),
+    raw: data,
+  };
+}
+
+type ActivitySummaryUpsert = {
+  user_id: string;
+  polar_id: string;
+  date: string;
+  steps?: number | null;
+  active_calories?: number | null;
+  total_calories?: number | null;
+  distance_m?: number | null;
+  raw?: any;
+};
+
+function mapPolarActivitySummaryToUpsert(userId: string, data: any): ActivitySummaryUpsert | null {
+  const polarId = String(data?.id ?? data?.polar_id ?? data?.activity_id ?? "");
+  const dateStr = data?.date ?? data?.created ?? null;
+  const date = dateOnlyFromIso(dateStr);
+
+  if (!polarId || !date) return null;
+
+  return {
+    user_id: userId,
+    polar_id: polarId,
+    date,
+    steps: asInt(data?.steps ?? null),
+    active_calories: asInt(data?.active_calories ?? data?.activeCalories ?? null),
+    total_calories: asInt(data?.total_calories ?? data?.totalCalories ?? null),
+    distance_m: asInt(data?.distance_m ?? data?.distanceMeters ?? null),
+    raw: data,
+  };
+}
+
+type ContinuousHrUpsert = {
+  user_id: string;
+  polar_id: string;
+  date: string;
+  samples?: Array<{ t_offset_sec: number; hr: number }> | null;
+  raw?: any;
+};
+
+function mapPolarContinuousHrToUpsert(userId: string, date: string, data: any): ContinuousHrUpsert | null {
+  const polarId = String(data?.id ?? data?.polar_id ?? `${userId}_${date}`);
+
+  if (!polarId || !date) return null;
+
+  const samples = normalizeHrSeries(data?.samples ?? data?.data ?? null);
+
+  return {
+    user_id: userId,
+    polar_id: polarId,
+    date,
+    samples: samples.length > 0 ? samples : null,
+    raw: data,
+  };
+}
+
 // HR series expected shapes:
 // - workout: [{t_offset_sec, hr}] or [{time, value}] etc
 // - sleep: same
@@ -338,6 +433,78 @@ function normalizeSleepStages(stages: any): Array<{ stage: "awake" | "light" | "
     }
   }
   return out;
+}
+
+// Strain calculation: convert 0-200 internal strain to 0-21 Whoop-style scale
+function computeStrain21(strainScore: number | null): number | null {
+  if (strainScore === null || strainScore < 0) return null;
+  // Formula: strain_21 = 21 * (1 - exp(-strain_score * 0.015))
+  const clamped = Math.max(0, Math.min(200, strainScore));
+  const strain21 = 21 * (1 - Math.exp(-clamped * 0.015));
+  return Math.round(strain21 * 100) / 100;
+}
+
+// Sleep coach metrics computation
+function computeSleepCoachMetrics(opts: {
+  sleepGotMin: number | null;
+  sleepNeededMin: number | null;
+  baselineSleepMin: number | null;
+  strainScore: number | null;
+  recoveryScore: number | null;
+  sleepDebtMin: number | null;
+}): {
+  sleepNeededMin: number | null;
+  sleepDebtMin: number | null;
+  sleepPerformancePct: number | null;
+  strainTargetLow: number | null;
+  strainTargetHigh: number | null;
+} {
+  const { sleepGotMin, sleepNeededMin, baselineSleepMin, strainScore, recoveryScore, sleepDebtMin } = opts;
+
+  // Compute sleep needed based on baseline + strain + debt
+  let computedSleepNeeded = baselineSleepMin ?? 480; // Default 8 hours
+  if (strainScore !== null && strainScore > 0) {
+    // Add extra sleep need based on strain (rough estimate: 1 min per 2 strain)
+    computedSleepNeeded += Math.ceil(strainScore / 2);
+  }
+  if (sleepDebtMin !== null && sleepDebtMin > 0) {
+    // Add sleep debt repayment (rough estimate: 50% of debt)
+    computedSleepNeeded += Math.ceil(sleepDebtMin * 0.5);
+  }
+
+  // Use provided sleepNeededMin if available, otherwise use computed
+  const finalSleepNeeded = sleepNeededMin ?? computedSleepNeeded;
+
+  // Compute sleep performance
+  let sleepPerformancePct = null;
+  if (sleepGotMin !== null && finalSleepNeeded > 0) {
+    sleepPerformancePct = Math.round((sleepGotMin / finalSleepNeeded) * 100 * 100) / 100;
+    sleepPerformancePct = Math.max(0, Math.min(200, sleepPerformancePct)); // Clamp 0-200%
+  }
+
+  // Compute strain target based on recovery score
+  let strainTargetLow = null;
+  let strainTargetHigh = null;
+  if (recoveryScore !== null) {
+    if (recoveryScore >= 67) {
+      strainTargetLow = 14;
+      strainTargetHigh = 18;
+    } else if (recoveryScore >= 34) {
+      strainTargetLow = 8;
+      strainTargetHigh = 14;
+    } else {
+      strainTargetLow = 0;
+      strainTargetHigh = 8;
+    }
+  }
+
+  return {
+    sleepNeededMin: finalSleepNeeded,
+    sleepDebtMin: sleepDebtMin ?? null,
+    sleepPerformancePct,
+    strainTargetLow,
+    strainTargetHigh,
+  };
 }
 
 // ------------------------------------------------------------
@@ -459,6 +626,9 @@ Deno.serve(async (req) => {
     // - for each workout, fetch detail/series/zones (if separate endpoints)
     // - list sleep since date
     // - for each sleep, fetch detail/series/stages (if separate endpoints)
+    // - list nightly recharge since date
+    // - list activity summary since date
+    // - list continuous HR for each touched date
     //
     // Once you confirm your actual endpoints, you only edit the `paths` object below.
     // ------------------------------------------------------------
@@ -473,6 +643,12 @@ Deno.serve(async (req) => {
       sleepList: `sleep?since=${sinceParam}`,
       // Expected to return detail for one sleep with stages/hr series
       sleepDetail: (id: string) => `sleep/${encodeURIComponent(id)}`,
+      // NEW: Expected to return list: [{id, date, hrv_avg, ...}, ...]
+      nightlyRechargeList: `nightly-recharge?since=${sinceParam}`,
+      // NEW: Expected to return list: [{id, date, steps, ...}, ...]
+      activitySummaryList: `activity-summary?since=${sinceParam}`,
+      // NEW: Expected to return samples for a specific date
+      continuousHr: (date: string) => `continuous-heart-rate/${encodeURIComponent(date)}`,
     };
 
     // 1) Workouts
@@ -611,6 +787,213 @@ Deno.serve(async (req) => {
       }
     }
 
+    // 3) Nightly Recharge
+    let nightlyRechargeUpserted = 0;
+    try {
+      const nightlyRechargeList = await polarGetJson(POLAR_API_BASE_URL, paths.nightlyRechargeList, accessToken);
+      const nightlyRechargeArr: any[] = Array.isArray(nightlyRechargeList)
+        ? nightlyRechargeList
+        : (nightlyRechargeList?.items ?? nightlyRechargeList?.data ?? []);
+
+      for (const nr of nightlyRechargeArr) {
+        const mapped = mapPolarNightlyRechargeToUpsert(userId, nr);
+        if (!mapped) continue;
+
+        datesTouched.add(mapped.date);
+
+        const { error: upErr } = await supabaseAdmin
+          .from("nightly_recharge")
+          .upsert(mapped, { onConflict: "polar_id" });
+
+        if (upErr) throw upErr;
+        nightlyRechargeUpserted++;
+      }
+    } catch (e) {
+      // Gracefully fail if endpoint not available
+      console.log(`Nightly Recharge sync skipped: ${(e as Error).message}`);
+    }
+
+    // 4) Activity Summary
+    let activitySummaryUpserted = 0;
+    try {
+      const activitySummaryList = await polarGetJson(POLAR_API_BASE_URL, paths.activitySummaryList, accessToken);
+      const activitySummaryArr: any[] = Array.isArray(activitySummaryList)
+        ? activitySummaryList
+        : (activitySummaryList?.items ?? activitySummaryList?.data ?? []);
+
+      for (const as of activitySummaryArr) {
+        const mapped = mapPolarActivitySummaryToUpsert(userId, as);
+        if (!mapped) continue;
+
+        datesTouched.add(mapped.date);
+
+        const { error: upErr } = await supabaseAdmin
+          .from("activity_summary")
+          .upsert(mapped, { onConflict: "polar_id" });
+
+        if (upErr) throw upErr;
+        activitySummaryUpserted++;
+      }
+    } catch (e) {
+      // Gracefully fail if endpoint not available
+      console.log(`Activity Summary sync skipped: ${(e as Error).message}`);
+    }
+
+    // 5) Continuous Heart Rate
+    let continuousHrUpserted = 0;
+    try {
+      for (const dateStr of datesTouched) {
+        try {
+          const hrData = await polarGetJson(POLAR_API_BASE_URL, paths.continuousHr(dateStr), accessToken);
+          const mapped = mapPolarContinuousHrToUpsert(userId, dateStr, hrData);
+          if (!mapped) continue;
+
+          const { error: upErr } = await supabaseAdmin
+            .from("continuous_hr")
+            .upsert(mapped, { onConflict: "polar_id" });
+
+          if (upErr) throw upErr;
+          continuousHrUpserted++;
+        } catch {
+          // Gracefully fail for individual dates
+          continue;
+        }
+      }
+    } catch (e) {
+      // Gracefully fail if endpoint not available
+      console.log(`Continuous HR sync skipped: ${(e as Error).message}`);
+    }
+
+    // 6) Post-sync computation: Update daily_metrics with strain_21, sleep coach metrics, and strain targets
+    try {
+      for (const dateStr of datesTouched) {
+        // Fetch current data for this date
+        const { data: existingMetrics } = await supabaseAdmin
+          .from("daily_metrics")
+          .select("*")
+          .eq("user_id", userId)
+          .eq("date", dateStr)
+          .maybeSingle();
+
+        // Build update payload
+        const updatePayload: Record<string, any> = {};
+
+        // Compute strain_21 from workouts (if available)
+        const { data: workouts } = await supabaseAdmin
+          .from("workouts")
+          .select("tlp_perceived")
+          .eq("user_id", userId)
+          .eq("workout_date", dateStr);
+
+        if (workouts && workouts.length > 0) {
+          const totalStrain = workouts.reduce((sum, w) => {
+            const strain = asFloat(w.tlp_perceived);
+            return sum + (strain ?? 0);
+          }, 0);
+          const strain21 = computeStrain21(totalStrain);
+          if (strain21 !== null) updatePayload.strain_21 = strain21;
+        }
+
+        // Update with nightly recharge data (hrv_ms, resting_hr)
+        const { data: nightlyRecharge } = await supabaseAdmin
+          .from("nightly_recharge")
+          .select("hrv_avg, hr_min")
+          .eq("user_id", userId)
+          .eq("date", dateStr)
+          .maybeSingle();
+
+        if (nightlyRecharge) {
+          if (nightlyRecharge.hrv_avg !== null) updatePayload.hrv_ms = nightlyRecharge.hrv_avg;
+          if (nightlyRecharge.hr_min !== null) updatePayload.resting_hr = nightlyRecharge.hr_min;
+        }
+
+        // Update with activity summary data
+        const { data: activitySummary } = await supabaseAdmin
+          .from("activity_summary")
+          .select("steps, active_calories, total_calories, distance_m")
+          .eq("user_id", userId)
+          .eq("date", dateStr)
+          .maybeSingle();
+
+        if (activitySummary) {
+          if (activitySummary.steps !== null) updatePayload.steps = activitySummary.steps;
+          if (activitySummary.active_calories !== null) updatePayload.active_calories = activitySummary.active_calories;
+          if (activitySummary.total_calories !== null) updatePayload.total_calories = activitySummary.total_calories;
+          if (activitySummary.distance_m !== null) updatePayload.distance_m = activitySummary.distance_m;
+        }
+
+        // Fetch sleep data for this date
+        const { data: sleepData } = await supabaseAdmin
+          .from("sleep_sessions")
+          .select("duration_min")
+          .eq("user_id", userId)
+          .eq("sleep_date", dateStr);
+
+        let sleepGotMin = null;
+        if (sleepData && sleepData.length > 0) {
+          sleepGotMin = sleepData.reduce((sum, s) => sum + (s.duration_min ?? 0), 0);
+        }
+
+        // Fetch baseline sleep and compute sleep coach metrics
+        const { data: historicalMetrics } = await supabaseAdmin
+          .from("daily_metrics")
+          .select("sleep_duration_min, recovery_score, strain_score, sleep_debt_min")
+          .eq("user_id", userId)
+          .lt("date", dateStr)
+          .order("date", { ascending: false })
+          .limit(28);
+
+        let baselineSleepMin = 480; // Default 8 hours
+        if (historicalMetrics && historicalMetrics.length > 0) {
+          const validSleep = historicalMetrics
+            .map((m) => m.sleep_duration_min)
+            .filter((s) => s !== null && s > 0);
+          if (validSleep.length > 0) {
+            baselineSleepMin = Math.round(
+              validSleep.reduce((a, b) => a + b, 0) / validSleep.length
+            );
+          }
+        }
+
+        const sleepCoachMetrics = computeSleepCoachMetrics({
+          sleepGotMin,
+          sleepNeededMin: existingMetrics?.sleep_needed_min ?? null,
+          baselineSleepMin,
+          strainScore: existingMetrics?.strain_score ?? null,
+          recoveryScore: existingMetrics?.recovery_score ?? null,
+          sleepDebtMin: existingMetrics?.sleep_debt_min ?? null,
+        });
+
+        if (sleepCoachMetrics.sleepNeededMin !== null) updatePayload.sleep_needed_min = sleepCoachMetrics.sleepNeededMin;
+        if (sleepCoachMetrics.sleepDebtMin !== null) updatePayload.sleep_debt_min = sleepCoachMetrics.sleepDebtMin;
+        if (sleepCoachMetrics.sleepPerformancePct !== null) updatePayload.sleep_performance_pct = sleepCoachMetrics.sleepPerformancePct;
+        if (sleepCoachMetrics.strainTargetLow !== null) updatePayload.strain_target_low = sleepCoachMetrics.strainTargetLow;
+        if (sleepCoachMetrics.strainTargetHigh !== null) updatePayload.strain_target_high = sleepCoachMetrics.strainTargetHigh;
+
+        // Update daily_metrics
+        if (Object.keys(updatePayload).length > 0) {
+          updatePayload.updated_at = new Date().toISOString();
+
+          // Try to update existing record, or create if not exists
+          const { error: updateErr } = await supabaseAdmin
+            .from("daily_metrics")
+            .upsert(
+              {
+                user_id: userId,
+                date: dateStr,
+                ...updatePayload,
+              },
+              { onConflict: "user_id,date" }
+            );
+
+          if (updateErr) throw updateErr;
+        }
+      }
+    } catch (e) {
+      // Log but don't fail the entire sync
+      console.log(`Daily metrics computation error: ${(e as Error).message}`);
+    }
+
     // Update last_synced_at
     const nowIso = new Date().toISOString();
     const { error: lastErr } = await supabaseAdmin
@@ -624,6 +1007,9 @@ Deno.serve(async (req) => {
       ok: true,
       workoutsUpserted,
       sleepUpserted,
+      nightlyRechargeUpserted,
+      activitySummaryUpserted,
+      continuousHrUpserted,
       datesTouched: Array.from(datesTouched).sort(),
       since: sinceDate.toISOString(),
       syncedAt: nowIso,
