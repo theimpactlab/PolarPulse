@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createSupabaseBrowserClient } from "@/src/lib/supabase/client";
+import { createSupabaseBrowserClient } from "@/src/lib/supabase/browser";
 
 function sanitizeNext(nextRaw: string | null): string {
   const fallback = "/app/dashboard";
