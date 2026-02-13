@@ -12,11 +12,13 @@ type WorkoutRow = {
   distance_m: number | null;
   avg_hr: number | null;
   max_hr: number | null;
+  tlp_cardio: number | null;
+  tlp_perceived: number | null;
   raw: any | null;
 };
 
 type ZoneRow = {
-  zone: number;          // 1..5
+  zone: number;         // 1..5
   minutes: number | null; // minutes
 };
 
@@ -37,7 +39,7 @@ export default async function WorkoutDetailPage({ params }: any) {
 
   const { data: workout, error: wErr } = await supabase
     .from("workouts")
-    .select("id,workout_date,type,start_time,end_time,duration_min,calories,distance_m,avg_hr,max_hr,raw")
+    .select("id,workout_date,type,start_time,end_time,duration_min,calories,distance_m,avg_hr,max_hr,tlp_cardio,tlp_perceived,raw")
     .eq("user_id", userRes.user.id)
     .eq("id", id)
     .maybeSingle<WorkoutRow>();
@@ -91,6 +93,7 @@ export default async function WorkoutDetailPage({ params }: any) {
         distanceM: workout.distance_m ?? null,
         avgHr: workout.avg_hr ?? null,
         maxHr: workout.max_hr ?? null,
+        trainingLoad: workout.tlp_cardio ?? workout.tlp_perceived ?? null,
       }}
       hrPoints={hrPoints}
       zones={{
