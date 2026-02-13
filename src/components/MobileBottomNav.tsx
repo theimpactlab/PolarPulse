@@ -6,7 +6,7 @@ import Link from "next/link";
 type NavItem = {
   href: string;
   label: string;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
 };
 
 const mainTabs: NavItem[] = [
