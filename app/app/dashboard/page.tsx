@@ -36,11 +36,21 @@ export default async function DashboardPage() {
     .order("computed_on", { ascending: false })
     .limit(4);
 
+  // Fetch today's sleep session for Sleep Coach duration
+  const { data: sleepSession } = await supabase
+    .from("sleep_sessions")
+    .select("duration_min")
+    .eq("sleep_date", iso(today))
+    .order("sleep_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return (
     <DashboardClient
       rows={metrics ?? []}
       recharge={recharge}
       baselines={baselines ?? []}
+      sleepGotMin={sleepSession?.duration_min ?? null}
     />
   );
 }
