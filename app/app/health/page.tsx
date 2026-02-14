@@ -61,7 +61,7 @@ export default async function HealthPage() {
     date: r.date,
     recovery_index: r.ans_charge,
     hrv_balance: r.hrv_avg,
-    rmssd_sleep: null,
+    rmssd_sleep: undefined,
   }));
 
   return (
