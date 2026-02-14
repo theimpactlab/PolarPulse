@@ -157,13 +157,11 @@ export default function SleepClient({
                             ? "#facc15"
                             : "#f87171"
                   }
+                
+                  label={sleepScore != null ? String(sleepScore) : "--"}
+                  sublabel="Sleep Score"
                 />
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <div className={`text-4xl font-bold ${getSleepQualityColor(sleepScore)}`}>
-                    {sleepScore ?? "--"}
-                  </div>
-                  <div className="text-white/60 text-xs mt-1">Sleep Score</div>
-                </div>
+
               </div>
             </div>
 
