@@ -187,8 +187,8 @@ export function computeHealthspan(
   // Normalise to 0-100
   const healthScore = totalWeight > 0 ? totalScore / totalWeight : 0;
 
-  // Map to biological age: score=100 means -5 years, score=0 means +15 years
-  const ageOffset = ((100 - healthScore) / 100) * 20 - 5;
+  // Map to biological age: score=100 → -10y, score=75 → -5y, score=50 → 0, score=0 → +10y
+  const ageOffset = ((50 - healthScore) / 50) * 10;
   const biologicalAge = Math.round(userAge + ageOffset);
 
   // Pace of aging: compare recent 7d vs full 30d
