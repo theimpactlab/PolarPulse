@@ -5,7 +5,8 @@ export interface DailyMetricRow {
   date: string;
   hrv_ms: number | null;
   resting_hr: number | null;
-  sleep_duration_min: number | null;
+  sleep_needed_min: number | null;
+  sleep_debt_min: number | null;
   sleep_score: number | null;
   steps: number | null;
   respiratory_rate: number | null;
@@ -133,7 +134,10 @@ export function computeHealthspan(
 
   const recentHRV = avg(recent.map(m => m.hrv_ms));
   const recentRHR = avg(recent.map(m => m.resting_hr));
-  const recentSleep = avg(recent.map(m => m.sleep_duration_min));
+  const recentSleep = avg(recent.map(m => {
+    if (m.sleep_needed_min != null && m.sleep_debt_min != null) return m.sleep_needed_min - m.sleep_debt_min;
+    return null;
+  }));
   const recentSteps = avg(recent.map(m => m.steps));
   const recentRR = avg(recent.map(m => m.respiratory_rate));
   const sleepScores = recent.map(m => m.sleep_score).filter((v): v is number => v !== null);
@@ -196,7 +200,10 @@ export function computeHealthspan(
     const older = all30.slice(7);
     const olderHRV = avg(older.map(m => m.hrv_ms));
     const olderRHR = avg(older.map(m => m.resting_hr));
-    const olderSleep = avg(older.map(m => m.sleep_duration_min));
+    const olderSleep = avg(older.map(m => {
+      if (m.sleep_needed_min != null && m.sleep_debt_min != null) return m.sleep_needed_min - m.sleep_debt_min;
+      return null;
+    }));
 
     let olderScore = 0;
     let olderWeight = 0;
