@@ -2,7 +2,6 @@
 
 import { useState, useRef } from "react";
 import { createBrowserClient } from "@supabase/ssr";
-import { computeHealthspan, DailyMetricRow } from "@/src/lib/healthspan";
 
 interface Connection {
   connected_at: string | null;
@@ -15,8 +14,6 @@ export default function ProfileClient({
   email,
   userId,
   connection,
-  dailyMetrics = [],
-  userAge = 30,
   profileName = "",
   profileDob = "",
   profileAvatarUrl = "",
@@ -24,8 +21,6 @@ export default function ProfileClient({
   email: string;
   userId: string;
   connection: Connection | null;
-  dailyMetrics?: DailyMetricRow[];
-  userAge?: number;
   profileName?: string;
   profileDob?: string;
   profileAvatarUrl?: string;
@@ -52,9 +47,6 @@ export default function ProfileClient({
   const currentAge = dob
     ? Math.floor((Date.now() - new Date(dob).getTime()) / 31557600000)
     : userAge;
-
-  // Compute healthspan with real age
-  const healthspan = computeHealthspan(dailyMetrics, currentAge);
 
   // Initials from name or email
   const initials = name
@@ -246,43 +238,6 @@ export default function ProfileClient({
           {saveMsg && <p className="text-xs text-center text-white/50">{saveMsg}</p>}
         </div>
       </div>
-      {/* Healthspan Section */}
-      {healthspan.biologicalAge !== null && (
-        <div className="mb-6">
-          <h2 className="text-[11px] uppercase tracking-widest font-medium text-white/40 mb-3 px-1">Healthspan</h2>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4 text-center">
-              <div className="text-[11px] uppercase tracking-wider text-white/40 mb-1">Biological Age</div>
-              <div className="text-4xl font-bold text-white">{healthspan.biologicalAge}</div>
-              <div className="text-xs text-white/30 mt-1">years</div>
-            </div>
-            <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4 text-center">
-              <div className="text-[11px] uppercase tracking-wider text-white/40 mb-1">Pace of Aging</div>
-              <div className="text-4xl font-bold" style={{ color: healthspan.paceColor }}>
-                {healthspan.paceOfAging !== null ? healthspan.paceOfAging.toFixed(1) + "x" : "–"}
-              </div>
-              <div className="text-xs mt-1" style={{ color: healthspan.paceColor + "99" }}>{healthspan.paceLabel}</div>
-            </div>
-          </div>
-          {healthspan.metricBreakdown.length > 0 && (
-            <div className="mt-3 bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4">
-              <div className="text-[11px] uppercase tracking-wider text-white/40 mb-3">Health Score: {healthspan.healthScore}/100</div>
-              <div className="space-y-2.5">
-                {healthspan.metricBreakdown.map((m) => (
-                  <div key={m.label} className="flex items-center justify-between">
-                    <span className="text-xs text-white/50 w-20">{m.label}</span>
-                    <div className="flex-1 mx-3 h-1.5 rounded-full bg-white/[0.08] overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500" style={{ width: m.score + "%", backgroundColor: m.color }} />
-                    </div>
-                    <span className="text-xs text-white/60 w-20 text-right">{m.value}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="text-[10px] text-white/25 mt-3">Estimate based on HRV, heart rate, sleep, activity & respiratory data from Polar</p>
-            </div>
-          )}
-        </div>
-      )}
       {/* Polar Connection */}
       <div className="mb-6">
         <h2 className="text-[11px] uppercase tracking-widest font-medium text-white/40 mb-3 px-1">Polar Connection</h2>
