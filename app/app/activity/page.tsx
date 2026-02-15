@@ -76,7 +76,7 @@ export default async function StrainPage() {
   const [strainRes, strainHistoryRes, workoutsRes, recoveryRes] = await Promise.all([
     supabase
       .from("daily_metrics")
-      .select("strain_21, calories_total")
+      .select("strain_21, total_calories")
       .eq("user_id", userRes.user.id)
       .order("date", { ascending: false })
       .limit(1)
@@ -106,7 +106,7 @@ export default async function StrainPage() {
   ]);
 
   const strain = strainRes.data?.strain_21 ?? 0;
-  const calories = strainRes.data?.calories_total ?? null;
+  const calories = strainRes.data?.total_calories ?? null;
   const recovery = recoveryRes.data?.ans_charge ?? null;
   const rows = workoutsRes.data ?? [];
   const strainHistory = strainHistoryRes.data ?? [];
