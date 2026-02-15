@@ -54,6 +54,13 @@ function getStrainLabel(strain: number): string {
   return "Minimal";
 }
 
+function getTargetRange(recovery: number | null): { low: number; high: number } {
+  if (recovery === null) return { low: 8, high: 14 };
+  if (recovery >= 67) return { low: 14, high: 18 };
+  if (recovery >= 34) return { low: 8, high: 14 };
+  return { low: 4, high: 8 };
+}
+
 export default async function StrainPage() {
   const supabase = await createSupabaseServerClient();
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
@@ -104,6 +111,7 @@ export default async function StrainPage() {
   const rows = workoutsRes.data ?? [];
   const strainHistory = strainHistoryRes.data ?? [];
   const last7 = strainHistory.slice(-7);
+  const target = getTargetRange(recovery);
 
   const byDate = rows.reduce<Record<string, WorkoutRow[]>>((acc, r) => {
     acc[r.workout_date] = acc[r.workout_date] ?? [];
@@ -138,6 +146,8 @@ export default async function StrainPage() {
       <div className="px-4 mt-4">
         <StrainCoach
           currentStrain={strain}
+          targetLow={target.low}
+          targetHigh={target.high}
           recoveryScore={recovery}
         />
       </div>
