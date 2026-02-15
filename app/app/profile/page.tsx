@@ -21,7 +21,7 @@ export default async function ProfilePage() {
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
   const { data: metricsRows } = await supabase
     .from("daily_metrics")
-    .select("date,hrv_ms,resting_hr,sleep_duration_min,sleep_score,steps,respiratory_rate")
+    .select("date,hrv_ms,resting_hr,sleep_needed_min,sleep_debt_min,sleep_score,steps,respiratory_rate")
     .gte("date", thirtyDaysAgo.toISOString().split("T")[0])
     .order("date", { ascending: false });
 
