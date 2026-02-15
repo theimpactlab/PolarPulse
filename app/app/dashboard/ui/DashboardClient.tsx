@@ -152,10 +152,10 @@ export default function DashboardClient({
       </div>
 
       {/* \u2500\u2500 Three Dials \u2500\u2500 WHOOP-style top row */}
-      <div className="grid grid-cols-3 gap-2 px-4 mb-6">
+      <div className="grid grid-cols-3 gap-4 px-4 mb-6">
         {/* Recovery Dial */}
-        <Link href="/app/health" className="flex flex-col items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl py-4 px-2 hover:bg-white/[0.07] transition">
-          <RingProgress value={recovery} max={100} size={90} stroke={8} unit="%" colorZone="recovery" />
+        <Link href="/app/health" className="flex flex-col items-center py-4 px-2">
+          <RingProgress value={recovery} max={100} size={100} stroke={12} unit="%" colorZone="recovery" />
           <div className="mt-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: recoveryColor(recovery) }}>
             Recovery
           </div>
@@ -163,16 +163,16 @@ export default function DashboardClient({
         </Link>
 
         {/* Strain Dial */}
-        <Link href="/app/activity" className="flex flex-col items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl py-4 px-2 hover:bg-white/[0.07] transition">
-          <RingProgress value={strain21} max={21} size={90} stroke={8} colorZone="strain" sublabel={strain21 !== null ? strain21.toFixed(1) + " / 21" : ""} />
+        <Link href="/app/activity" className="flex flex-col items-center py-4 px-2">
+          <RingProgress value={strain21} max={21} size={100} stroke={12} colorZone="strain" sublabel={strain21 !== null ? strain21.toFixed(1) + " / 21" : ""} />
           <div className="mt-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: strainColor(strain21) }}>
             Strain
           </div>
         </Link>
 
         {/* Sleep Dial */}
-        <Link href="/app/sleep" className="flex flex-col items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl py-4 px-2 hover:bg-white/[0.07] transition">
-          <RingProgress value={displaySleepScore} max={100} size={90} stroke={8} unit="%" colorZone="sleep" />
+        <Link href="/app/sleep" className="flex flex-col items-center py-4 px-2">
+          <RingProgress value={displaySleepScore} max={100} size={100} stroke={12} unit="%" colorZone="sleep" />
           <div className="mt-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: sleepColor(displaySleepScore) }}>
             Sleep
           </div>
