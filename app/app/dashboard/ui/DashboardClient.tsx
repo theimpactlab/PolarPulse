@@ -1,19 +1,10 @@
 "use client";
 
 import React, { useMemo } from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from "recharts";
 import { RingProgress } from "@/src/components/RingProgress";
-import { MetricCard } from "@/src/components/MetricCard";
 import { StrainCoach } from "@/src/components/StrainCoach";
 import { SleepCoach } from "@/src/components/SleepCoach";
+import Link from "next/link";
 
 type Row = {
   date: string;
@@ -45,36 +36,31 @@ type Recharge = {
   ans_charge_status: string | null;
 } | null;
 
-type Baseline = {
-  metric: string;
-  avg: number | null;
-};
-
-function formatShortDate(iso: string) {
-  const m = iso.slice(5, 7);
-  const d = iso.slice(8, 10);
-  return `${m}/${d}`;
-}
+type Baseline = { metric: string; avg: number | null };
 
 function recoveryZone(score: number | null) {
   const v = score ?? 0;
-  if (v >= 67) return { label: "Green Recovery", cls: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" };
-  if (v >= 34) return { label: "Yellow Recovery", cls: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/20" };
-  return { label: "Red Recovery", cls: "text-red-400", bg: "bg-red-500/10 border-red-500/20" };
+  if (v >= 67) return { label: "Green", cls: "text-emerald-400", ring: "#22c55e" };
+  if (v >= 34) return { label: "Yellow", cls: "text-yellow-400", ring: "#eab308" };
+  return { label: "Red", cls: "text-red-400", ring: "#ef4444" };
 }
 
-function trend(current: number | null, baseline: number | null, higherIsBetter: boolean): "up" | "down" | "flat" | null {
-  if (current === null || baseline === null || baseline === 0) return null;
+function trend(current: number | null, baseline: number | null, higherIsBetter: boolean): string {
+  if (current === null || baseline === null || baseline === 0) return "";
   const diff = current - baseline;
-  if (Math.abs(diff) < baseline * 0.02) return "flat";
-  if (higherIsBetter) return diff > 0 ? "up" : "down";
-  return diff < 0 ? "up" : "down";
+  if (Math.abs(diff) < baseline * 0.02) return "\u2192";
+  const up = diff > 0;
+  const good = higherIsBetter ? up : !up;
+  return good ? "\u2191" : "\u2193";
 }
 
-function trendIsGood(current: number | null, baseline: number | null, higherIsBetter: boolean): boolean | undefined {
-  const t = trend(current, baseline, higherIsBetter);
-  if (t === null || t === "flat") return undefined;
-  return t === "up";
+function trendColor(current: number | null, baseline: number | null, higherIsBetter: boolean): string {
+  if (current === null || baseline === null) return "text-white/30";
+  const diff = current - baseline;
+  if (Math.abs(diff) < baseline * 0.02) return "text-white/40";
+  const up = diff > 0;
+  const good = higherIsBetter ? up : !up;
+  return good ? "text-green-400" : "text-red-400";
 }
 
 export default function DashboardClient({
@@ -82,11 +68,15 @@ export default function DashboardClient({
   recharge,
   baselines,
   sleepGotMin,
+  sleepNeededMin,
+  sleepScore,
 }: {
   rows: Row[];
   recharge: Recharge;
   baselines: Baseline[];
   sleepGotMin: number | null;
+  sleepNeededMin: number | null;
+  sleepScore: number | null;
 }) {
   const today = rows.length ? rows[rows.length - 1] : null;
 
@@ -97,37 +87,22 @@ export default function DashboardClient({
   }, [baselines]);
 
   const zone = recoveryZone(today?.recovery_score ?? null);
-
-  // Prefer nightly recharge data, fallback to daily_metrics
   const hrv = recharge?.hrv_avg ?? today?.hrv_ms ?? null;
   const rhr = recharge?.hr_min ?? today?.resting_hr ?? null;
   const rr = recharge?.breathing_rate_avg ?? today?.respiratory_rate ?? null;
-
   const hrvBase = baselineMap["hrv_ms"] ?? null;
   const rhrBase = baselineMap["resting_hr"] ?? null;
   const rrBase = baselineMap["respiratory_rate"] ?? null;
-
-  // Strain on 0-21 scale
   const strain21 = today?.strain_21 ?? null;
 
-  const chartData = useMemo(
-    () =>
-      rows.map((r) => ({
-        date: formatShortDate(r.date),
-        recovery: r.recovery_score ?? undefined,
-        strain: r.strain_21 ?? undefined,
-        sleep: r.sleep_score ?? undefined,
-      })),
-    [rows],
-  );
+  // Use the most recent non-null sleep score from rows if not passed
+  const displaySleepScore = sleepScore ?? [...rows].reverse().find(r => r.sleep_score != null)?.sleep_score ?? null;
 
   return (
     <div>
-      {/* Header */}
-      <div className="mb-6">
-        <div className="text-sm text-white/60">Dashboard</div>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Today</h1>
-        <p className="mt-2 text-white/60">
+      {/* Date Header */}
+      <div className="mb-8">
+        <p className="text-white/40 text-xs uppercase tracking-widest">
           {today
             ? new Date(today.date + "T00:00:00Z").toLocaleDateString("en-GB", {
                 weekday: "long",
@@ -138,54 +113,84 @@ export default function DashboardClient({
         </p>
       </div>
 
-      {/* Recovery Ring + Zone */}
-      <div className={`rounded-3xl border ${zone.bg} p-6 shadow-xl backdrop-blur mb-5`}>
-        <div className="flex flex-col items-center">
-          <RingProgress
-            value={today?.recovery_score ?? null}
-            max={100}
-            size={160}
-            stroke={14}
-            label="Recovery"
-            colorZone="recovery"
-          />
-          <div className={`mt-3 text-lg font-semibold ${zone.cls}`}>{zone.label}</div>
-          {recharge?.ans_charge_status && (
-            <div className="mt-1 text-xs text-white/45">
-              ANS Charge: {recharge.ans_charge_status.replace(/_/g, " ").toLowerCase()}
-            </div>
-          )}
+      {/* Recovery Ring — Hero Section */}
+      <div className="flex flex-col items-center mb-8">
+        <RingProgress
+          value={today?.recovery_score ?? null}
+          max={100}
+          size={200}
+          stroke={12}
+          label="Recovery"
+          colorZone="recovery"
+        />
+        <div className={"mt-3 text-base font-semibold " + zone.cls}>
+          {zone.label} Recovery
         </div>
+        {recharge?.ans_charge_status && (
+          <div className="mt-1 text-[11px] text-white/35">
+            ANS: {recharge.ans_charge_status.replace(/_/g, " ").toLowerCase()}
+          </div>
+        )}
       </div>
 
-      {/* Health Metrics Row */}
-      <div className="grid grid-cols-3 gap-2 mb-5">
-        <MetricCard
-          label="HRV"
-          value={hrv}
-          unit="ms"
-          trend={trend(hrv, hrvBase, true)}
-          trendIsGood={trendIsGood(hrv, hrvBase, true)}
-          baseline={hrvBase}
-          colorZone={hrv !== null && hrvBase !== null ? (hrv >= hrvBase ? "green" : hrv >= hrvBase * 0.85 ? "yellow" : "red") : null}
-        />
-        <MetricCard
-          label="RHR"
-          value={rhr}
-          unit="bpm"
-          trend={trend(rhr, rhrBase, false)}
-          trendIsGood={trendIsGood(rhr, rhrBase, false)}
-          baseline={rhrBase}
-          colorZone={rhr !== null && rhrBase !== null ? (rhr <= rhrBase ? "green" : rhr <= rhrBase * 1.1 ? "yellow" : "red") : null}
-        />
-        <MetricCard
-          label="Resp"
-          value={rr !== null ? Math.round(rr * 10) / 10 : null}
-          unit="br/m"
-          trend={trend(rr, rrBase, false)}
-          trendIsGood={trendIsGood(rr, rrBase, false)}
-          baseline={rrBase !== null ? Math.round(rrBase * 10) / 10 : null}
-        />
+      {/* Health Metrics Row — WHOOP style pills */}
+      <div className="flex gap-2 mb-8">
+        <Link href="/app/health" className="flex-1 bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 hover:bg-white/[0.07] transition">
+          <div className="text-[10px] text-white/40 uppercase tracking-wider">HRV</div>
+          <div className="flex items-baseline gap-1.5 mt-1">
+            <span className="text-lg font-bold tabular-nums">{hrv !== null ? Math.round(hrv) : "\u2013"}</span>
+            <span className="text-[10px] text-white/30">ms</span>
+            <span className={"text-xs ml-auto " + trendColor(hrv, hrvBase, true)}>{trend(hrv, hrvBase, true)}</span>
+          </div>
+        </Link>
+        <Link href="/app/health" className="flex-1 bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 hover:bg-white/[0.07] transition">
+          <div className="text-[10px] text-white/40 uppercase tracking-wider">RHR</div>
+          <div className="flex items-baseline gap-1.5 mt-1">
+            <span className="text-lg font-bold tabular-nums">{rhr !== null ? Math.round(rhr) : "\u2013"}</span>
+            <span className="text-[10px] text-white/30">bpm</span>
+            <span className={"text-xs ml-auto " + trendColor(rhr, rhrBase, false)}>{trend(rhr, rhrBase, false)}</span>
+          </div>
+        </Link>
+        <Link href="/app/health" className="flex-1 bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 hover:bg-white/[0.07] transition">
+          <div className="text-[10px] text-white/40 uppercase tracking-wider">Resp</div>
+          <div className="flex items-baseline gap-1.5 mt-1">
+            <span className="text-lg font-bold tabular-nums">{rr !== null ? (Math.round(rr * 10) / 10).toFixed(1) : "\u2013"}</span>
+            <span className="text-[10px] text-white/30">br/m</span>
+            <span className={"text-xs ml-auto " + trendColor(rr, rrBase, false)}>{trend(rr, rrBase, false)}</span>
+          </div>
+        </Link>
+      </div>
+
+      {/* Strain + Sleep Rings Side by Side */}
+      <div className="grid grid-cols-2 gap-4 mb-8">
+        <Link href="/app/activity" className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-5 flex flex-col items-center hover:bg-white/[0.07] transition">
+          <RingProgress
+            value={strain21}
+            max={21}
+            size={110}
+            stroke={9}
+            label="Strain"
+            colorZone="strain"
+          />
+          <div className="mt-2 text-xs text-white/50">
+            {strain21 !== null ? strain21.toFixed(1) : "\u2013"} / 21
+          </div>
+        </Link>
+        <Link href="/app/sleep" className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-5 flex flex-col items-center hover:bg-white/[0.07] transition">
+          <RingProgress
+            value={displaySleepScore}
+            max={100}
+            size={110}
+            stroke={9}
+            label="Sleep"
+            colorZone="sleep"
+          />
+          <div className="mt-2 text-xs text-white/50">
+            {sleepGotMin
+              ? Math.floor(sleepGotMin / 60) + "h " + (sleepGotMin % 60) + "m"
+              : "\u2013"}
+          </div>
+        </Link>
       </div>
 
       {/* Strain Coach */}
@@ -202,52 +207,10 @@ export default function DashboardClient({
       <div className="mb-5">
         <SleepCoach
           sleepGotMin={sleepGotMin}
-          sleepNeededMin={today?.sleep_needed_min ?? null}
+          sleepNeededMin={sleepNeededMin ?? today?.sleep_needed_min ?? null}
           sleepDebtMin={today?.sleep_debt_min ?? null}
           sleepPerformancePct={today?.sleep_performance_pct ?? null}
         />
-      </div>
-
-      {/* Quick Stats */}
-      <div className="grid grid-cols-2 gap-3 mb-5">
-        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-          <div className="text-xs text-white/50">Steps</div>
-          <div className="mt-1 text-xl font-semibold tabular-nums">{today?.steps ?? "â"}</div>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-          <div className="text-xs text-white/50">Active Calories</div>
-          <div className="mt-1 text-xl font-semibold tabular-nums">{today?.active_calories ?? "â"}</div>
-        </div>
-      </div>
-
-      {/* 14-day Trend Chart */}
-      <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-xl backdrop-blur">
-        <div className="mb-2 flex items-baseline justify-between">
-          <div className="text-sm font-medium text-white/80">Recovery Â· Strain Â· Sleep</div>
-          <div className="text-xs text-white/45">14 days</div>
-        </div>
-
-        <div className="h-44 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 10 }} />
-              <YAxis tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 10 }} width={28} />
-              <Tooltip
-                contentStyle={{
-                  background: "rgba(0,0,0,0.85)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 14,
-                  fontSize: 12,
-                }}
-                labelStyle={{ color: "rgba(255,255,255,0.75)" }}
-              />
-              <Line type="monotone" dataKey="recovery" stroke="#22c55e" strokeWidth={2} dot={false} name="Recovery" />
-              <Line type="monotone" dataKey="strain" stroke="#3b82f6" strokeWidth={2} dot={false} name="Strain" />
-              <Line type="monotone" dataKey="sleep" stroke="#a855f7" strokeWidth={2} dot={false} name="Sleep" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
       </div>
     </div>
   );
