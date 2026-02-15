@@ -34,29 +34,36 @@ function km(m: number | null) {
 
 function fmtNum(v: number | null | undefined, suffix = "") {
   if (typeof v !== "number" || !Number.isFinite(v)) return "–";
-  return `${Math.round(v)}${suffix}`;
+  return Math.round(v) + suffix;
 }
 
 function fmt1(v: number | null | undefined, suffix = "") {
   if (typeof v !== "number" || !Number.isFinite(v)) return "–";
-  return `${v.toFixed(1)}${suffix}`;
+  return v.toFixed(1) + suffix;
 }
-
-export default function WorkoutDetailClient({ workout, hrPoints, zones }: Props) {
+export default function WorkoutDetailClient({
+  workout,
+  hrPoints,
+  zones,
+}: Props) {
   const distanceKm = km(workout.distanceM);
 
   const avgSpeedKmh = useMemo(() => {
-    if (!distanceKm || !workout.durationMin || workout.durationMin <= 0) return null;
-    return (distanceKm / (workout.durationMin / 60));
+    if (!distanceKm || !workout.durationMin || workout.durationMin <= 0)
+      return null;
+    return distanceKm / (workout.durationMin / 60);
   }, [distanceKm, workout.durationMin]);
 
   const paceMinPerKm = useMemo(() => {
-    if (!distanceKm || !workout.durationMin || workout.durationMin <= 0) return null;
-    return workout.durationMin / distanceKm; // min/km
+    if (!distanceKm || !workout.durationMin || workout.durationMin <= 0)
+      return null;
+    return workout.durationMin / distanceKm;
   }, [distanceKm, workout.durationMin]);
 
   const zoneTotal = zones.z1 + zones.z2 + zones.z3 + zones.z4 + zones.z5 || 1;
-  const zonePct = (m: number) => Math.max(0, Math.min(100, (m / zoneTotal) * 100));
+  const hasZones = zones.z1 + zones.z2 + zones.z3 + zones.z4 + zones.z5 > 0;
+  const zonePct = (m: number) =>
+    Math.max(0, Math.min(100, (m / zoneTotal) * 100));
 
   const chartData = useMemo(
     () => hrPoints.map((p) => ({ t: p.t, hr: p.hr })),
@@ -67,56 +74,110 @@ export default function WorkoutDetailClient({ workout, hrPoints, zones }: Props)
     <div>
       <div className="mb-6">
         <div className="text-sm text-white/60">Activity</div>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{workout.type}</h1>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+          {workout.type}
+        </h1>
         <p className="mt-2 text-white/60">{workout.date}</p>
       </div>
 
       <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-xl backdrop-blur">
-        {/* Metrics grid */}
         <div className="grid grid-cols-2 gap-3">
-          <Tile label="Duration" value={workout.durationMin == null ? "–" : `${Math.round(workout.durationMin)} min`} />
-          <Tile label="Distance" value={distanceKm == null ? "–" : `${distanceKm.toFixed(2)} km`} />
+          <Tile
+            label="Duration"
+            value={
+              workout.durationMin == null
+                ? "–"
+                : Math.round(workout.durationMin) + " min"
+            }
+          />
+          <Tile
+            label="Distance"
+            value={
+              distanceKm == null ? "–" : distanceKm.toFixed(2) + " km"
+            }
+          />
           <Tile label="Calories" value={fmtNum(workout.calories)} />
           <Tile label="Avg HR" value={fmtNum(workout.avgHr)} />
           <Tile label="Max HR" value={fmtNum(workout.maxHr)} />
-          <Tile label="Avg Speed" value={avgSpeedKmh == null ? "–" : fmt1(avgSpeedKmh, " km/h")} />
+          <Tile
+            label="Avg Speed"
+            value={
+              avgSpeedKmh == null ? "–" : fmt1(avgSpeedKmh, " km/h")
+            }
+          />
           <Tile
             label="Pace"
             value={
               paceMinPerKm == null
                 ? "–"
-                : `${Math.floor(paceMinPerKm)}:${String(Math.round((paceMinPerKm % 1) * 60)).padStart(2, "0")} /km`
+                : Math.floor(paceMinPerKm) + ":" + String(
+                    Math.round((paceMinPerKm % 1) * 60),
+                  ).padStart(2, "0") + " /km"
             }
           />
-          <Tile label="Load" value={workout.trainingLoad == null ? "–" : fmt1(workout.trainingLoad)} />
+          <Tile
+            label="Load"
+            value={
+              workout.trainingLoad == null
+                ? "–"
+                : fmt1(workout.trainingLoad)
+            }
+          />
         </div>
       </div>
-
       {/* Heart rate chart */}
       <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
         <div className="mb-2 flex items-baseline justify-between">
           <div className="text-sm font-medium text-white/80">Heart Rate</div>
-          <div className="text-xs text-white/45">minutes</div>
+          {chartData.length > 0 && (
+            <div className="text-xs text-white/45">minutes</div>
+          )}
         </div>
-
         <div className="h-44 w-full">
           {chartData.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-sm text-white/50">
-              No heart rate series for this workout.
+            <div className="flex h-full flex-col items-center justify-center gap-2">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/20">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              <div className="text-sm text-white/30">
+                HR time series not available
+              </div>
+              {(workout.avgHr || workout.maxHr) && (
+                <div className="text-xs text-white/20">
+                  Summary: {workout.avgHr ? "avg " + workout.avgHr + " bpm" : ""}{workout.avgHr && workout.maxHr ? " · " : ""}{workout.maxHr ? "max " + workout.maxHr + " bpm" : ""}
+                </div>
+              )}
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
-                <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-                <XAxis dataKey="t" tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} />
-                <YAxis tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} width={30} />
+                <CartesianGrid
+                  stroke="rgba(255,255,255,0.08)"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="t"
+                  tick={{
+                    fill: "rgba(255,255,255,0.55)",
+                    fontSize: 11,
+                  }}
+                />
+                <YAxis
+                  tick={{
+                    fill: "rgba(255,255,255,0.55)",
+                    fontSize: 11,
+                  }}
+                  width={30}
+                />
                 <Tooltip
                   contentStyle={{
                     background: "rgba(0,0,0,0.85)",
                     border: "1px solid rgba(255,255,255,0.12)",
                     borderRadius: 14,
                   }}
-                  labelStyle={{ color: "rgba(255,255,255,0.75)" }}
+                  labelStyle={{
+                    color: "rgba(255,255,255,0.75)",
+                  }}
                 />
                 <Line
                   type="monotone"
@@ -130,35 +191,62 @@ export default function WorkoutDetailClient({ workout, hrPoints, zones }: Props)
           )}
         </div>
       </div>
-
       {/* HR Zones */}
       <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium text-white/80">Heart Rate Zones</div>
-          <div className="text-xs text-white/45">{Math.round(zoneTotal)} min</div>
+          <div className="text-sm font-medium text-white/80">
+            Heart Rate Zones
+          </div>
+          {hasZones && (
+            <div className="text-xs text-white/45">
+              {Math.round(zoneTotal)} min
+            </div>
+          )}
         </div>
 
-        <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-white/10">
-          <span className="inline-block h-full bg-white/25" style={{ width: `${zonePct(zones.z1)}%` }} />
-          <span className="inline-block h-full bg-white/35" style={{ width: `${zonePct(zones.z2)}%` }} />
-          <span className="inline-block h-full bg-white/45" style={{ width: `${zonePct(zones.z3)}%` }} />
-          <span className="inline-block h-full bg-white/55" style={{ width: `${zonePct(zones.z4)}%` }} />
-          <span className="inline-block h-full bg-white/65" style={{ width: `${zonePct(zones.z5)}%` }} />
-        </div>
-
-        <div className="mt-3 grid grid-cols-5 gap-2">
-          <ZoneCard label="Z1" minutes={zones.z1} />
-          <ZoneCard label="Z2" minutes={zones.z2} />
-          <ZoneCard label="Z3" minutes={zones.z3} />
-          <ZoneCard label="Z4" minutes={zones.z4} />
-          <ZoneCard label="Z5" minutes={zones.z5} />
-        </div>
+        {!hasZones ? (
+          <div className="flex flex-col items-center justify-center py-6 gap-2">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/20">
+              <rect x="3" y="12" width="3" height="8" rx="1" />
+              <rect x="8" y="8" width="3" height="12" rx="1" />
+              <rect x="13" y="4" width="3" height="16" rx="1" />
+              <rect x="18" y="9" width="3" height="11" rx="1" />
+            </svg>
+            <div className="text-sm text-white/30">Zone data not available</div>
+            <div className="text-xs text-white/20">Polar does not provide zone breakdown for this workout</div>
+          </div>
+        ) : (
+          <>
+            <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-white/10">
+              <span className="inline-block h-full bg-white/25" style={{ width: zonePct(zones.z1) + "%" }} />
+              <span className="inline-block h-full bg-white/35" style={{ width: zonePct(zones.z2) + "%" }} />
+              <span className="inline-block h-full bg-white/45" style={{ width: zonePct(zones.z3) + "%" }} />
+              <span className="inline-block h-full bg-white/55" style={{ width: zonePct(zones.z4) + "%" }} />
+              <span className="inline-block h-full bg-white/65" style={{ width: zonePct(zones.z5) + "%" }} />
+            </div>
+            <div className="mt-3 grid grid-cols-5 gap-2">
+              <ZoneCard label="Z1" minutes={zones.z1} />
+              <ZoneCard label="Z2" minutes={zones.z2} />
+              <ZoneCard label="Z3" minutes={zones.z3} />
+              <ZoneCard label="Z4" minutes={zones.z4} />
+              <ZoneCard label="Z5" minutes={zones.z5} />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-function Tile({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Tile({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
   return (
     <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
       <div className="text-xs text-white/50">{label}</div>
@@ -173,7 +261,7 @@ function ZoneCard({ label, minutes }: { label: string; minutes: number }) {
     <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-center">
       <div className="text-xs text-white/55">{label}</div>
       <div className="mt-1 text-sm font-semibold tabular-nums text-white">
-        {Math.round(minutes)}
+        {Math.round(minutes)}{" "}
         <span className="ml-1 text-[10px] font-normal text-white/45">min</span>
       </div>
     </div>
