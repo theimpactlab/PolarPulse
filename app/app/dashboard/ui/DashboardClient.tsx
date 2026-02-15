@@ -156,7 +156,7 @@ export default function DashboardClient({
             max={100}
             size={90}
             stroke={8}
-            label={recovery !== null ? Math.round(recovery) + "%" : "\u2013"}
+            unit="%"
             colorZone="recovery"
           />
           <div className="mt-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: recoveryColor(recovery) }}>
@@ -172,13 +172,13 @@ export default function DashboardClient({
             max={21}
             size={90}
             stroke={8}
-            label={strain21 !== null ? strain21.toFixed(1) : "\u2013"}
-            colorZone="strain"
+                        colorZone="strain"
+            sublabel={strain21 !== null ? strain21.toFixed(1) + " / 21" : ""}
           />
           <div className="mt-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: strainColor(strain21) }}>
             Strain
           </div>
-          <div className="text-[10px] text-white/30 mt-0.5">{strain21 !== null ? strain21.toFixed(1) + " / 21" : "\u2013"}</div>
+          
         </Link>
 
         {/* Sleep Dial */}
@@ -188,7 +188,7 @@ export default function DashboardClient({
             max={100}
             size={90}
             stroke={8}
-            label={displaySleepScore !== null ? Math.round(displaySleepScore) + "%" : "\u2013"}
+            unit="%"
             colorZone="sleep"
           />
           <div className="mt-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: sleepColor(displaySleepScore) }}>
