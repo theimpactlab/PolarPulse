@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -9,32 +9,28 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
-  CartesianGrid,
+  Area,
+  AreaChart,
 } from 'recharts';
-import { MetricCard } from '@/src/components/MetricCard';
 
 interface DailyMetric {
   date: string;
   hrv_ms?: number;
   resting_hr?: number;
   respiratory_rate?: number;
-  spo2?: number;
-  stress_avg?: number;
 }
 
 interface NightlyRecharge {
   date: string;
   recovery_index?: number;
   hrv_balance?: number;
-  rmssd_sleep?: number;
+  breathing_rate?: number;
 }
 
 interface Baseline {
   hrv_baseline: number;
   resting_hr_baseline: number;
   respiratory_rate_baseline: number;
-  spo2_baseline: number;
-  stress_baseline: number;
 }
 
 interface HealthClientProps {
@@ -43,397 +39,214 @@ interface HealthClientProps {
   baselines: Baseline;
 }
 
-type Status = 'good' | 'warning' | 'critical';
+function formatDate(iso: string) {
+  return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+}
 
-const getMetricStatus = (
-  value: number | undefined,
-  baseline: number,
-  isHigherBetter: boolean
-): Status => {
-  if (value === undefined) return 'warning';
+function getTrend(data: number[]): 'up' | 'down' | 'flat' {
+  if (data.length < 2) return 'flat';
+  const recent = data.slice(-3);
+  const earlier = data.slice(-7, -3);
+  if (recent.length === 0 || earlier.length === 0) return 'flat';
+  const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
+  const earlierAvg = earlier.reduce((a, b) => a + b, 0) / earlier.length;
+  const diff = ((recentAvg - earlierAvg) / earlierAvg) * 100;
+  if (Math.abs(diff) < 2) return 'flat';
+  return diff > 0 ? 'up' : 'down';
+}
 
-  const threshold = baseline * 0.1;
+function TrendArrow({ direction, good }: { direction: 'up' | 'down' | 'flat'; good?: boolean }) {
+  if (direction === 'flat') return <span className="text-white/40 text-xs">\u2192</span>;
+  const color = good ? 'text-green-400' : 'text-red-400';
+  return (
+    <span className={color + ' text-xs'}>
+      {direction === 'up' ? '\u2191' : '\u2193'}
+    </span>
+  );
+}
 
-  if (isHigherBetter) {
-    if (value >= baseline - threshold) return 'good';
-    if (value >= baseline - threshold * 2) return 'warning';
-    return 'critical';
-  } else {
-    if (value <= baseline + threshold) return 'good';
-    if (value <= baseline + threshold * 2) return 'warning';
-    return 'critical';
-  }
-};
+function MetricSection({
+  title,
+  value,
+  unit,
+  baseline,
+  data,
+  dataKey,
+  color,
+  higherIsBetter,
+  range,
+}: {
+  title: string;
+  value: number | null;
+  unit: string;
+  baseline: number;
+  data: any[];
+  dataKey: string;
+  color: string;
+  higherIsBetter: boolean;
+  range: string;
+}) {
+  const values = data.map((d) => d[dataKey]).filter((v: any) => v != null) as number[];
+  const trend = getTrend(values);
+  const trendGood = higherIsBetter ? trend === 'up' : trend === 'down';
+  const diff = value !== null ? value - baseline : null;
+  const diffStr = diff !== null ? (diff >= 0 ? '+' : '') + diff.toFixed(1) : null;
 
-const getStatusColor = (status: Status): string => {
-  switch (status) {
-    case 'good':
-      return '#22c55e';
-    case 'warning':
-      return '#eab308';
-    case 'critical':
-      return '#ef4444';
-  }
-};
+  return (
+    <div className="bg-zinc-900/60 border border-white/[0.06] rounded-2xl p-5 mb-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-white/50 text-xs font-medium uppercase tracking-wider">{title}</div>
+          <div className="flex items-baseline gap-2 mt-1">
+            <span className="text-3xl font-bold tabular-nums" style={{ color: value !== null ? color : 'rgba(255,255,255,0.3)' }}>
+              {value !== null ? Math.round(value * 10) / 10 : '\u2013'}
+            </span>
+            <span className="text-white/40 text-sm">{unit}</span>
+            {value !== null && <TrendArrow direction={trend} good={trendGood} />}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-white/30 text-[10px] uppercase">vs baseline</div>
+          <div className={'text-sm font-semibold ' + (diff !== null && diff !== 0 ? (trendGood ? 'text-green-400' : 'text-red-400') : 'text-white/40')}>
+            {diffStr ?? '\u2013'} {unit}
+          </div>
+          <div className="text-white/30 text-[10px]">baseline: {Math.round(baseline * 10) / 10}</div>
+        </div>
+      </div>
 
-const getStatusBg = (status: Status): string => {
-  switch (status) {
-    case 'good':
-      return 'bg-green-500/10';
-    case 'warning':
-      return 'bg-yellow-500/10';
-    case 'critical':
-      return 'bg-red-500/10';
-  }
-};
+      {/* Sparkline Chart */}
+      <div className="h-32 w-full -mx-2">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data}>
+            <defs>
+              <linearGradient id={'grad-' + dataKey} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={color} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={color} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis
+              dataKey="date"
+              tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 9 }}
+              axisLine={false}
+              tickLine={false}
+              interval="preserveStartEnd"
+            />
+            <YAxis hide domain={['dataMin - 5', 'dataMax + 5']} />
+            <Tooltip
+              contentStyle={{
+                background: 'rgba(0,0,0,0.9)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 12,
+                fontSize: 12,
+              }}
+              labelStyle={{ color: 'rgba(255,255,255,0.6)' }}
+            />
+            <ReferenceLine
+              y={baseline}
+              stroke="rgba(255,255,255,0.15)"
+              strokeDasharray="4 4"
+            />
+            <Area
+              type="monotone"
+              dataKey={dataKey}
+              stroke={color}
+              strokeWidth={2}
+              fill={'url(#grad-' + dataKey + ')'}
+              dot={false}
+              connectNulls
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
 
 export function HealthClient({
   dailyMetrics,
   nightlyRecharge,
   baselines,
 }: HealthClientProps) {
-  const latestMetrics = dailyMetrics[dailyMetrics.length - 1];
-
-  const metricsStatus = useMemo(() => {
-    if (!latestMetrics) return { good: 0, warning: 0, critical: 0 };
-
-    const stats = {
-      hrv: getMetricStatus(latestMetrics.hrv_ms, baselines.hrv_baseline, true),
-      rhr: getMetricStatus(
-        latestMetrics.resting_hr,
-        baselines.resting_hr_baseline,
-        false
-      ),
-      rr: getMetricStatus(
-        latestMetrics.respiratory_rate,
-        baselines.respiratory_rate_baseline,
-        false
-      ),
-      spo2: getMetricStatus(
-        latestMetrics.spo2,
-        baselines.spo2_baseline,
-        true
-      ),
-      stress: getMetricStatus(
-        latestMetrics.stress_avg,
-        baselines.stress_baseline,
-        false
-      ),
-    };
-
-    const good = Object.values(stats).filter((s) => s === 'good').length;
-    const warning = Object.values(stats).filter((s) => s === 'warning').length;
-    const critical = Object.values(stats).filter((s) => s === 'critical').length;
-
-    return { stats, good, warning, critical };
-  }, [latestMetrics, baselines]);
+  const [range, setRange] = useState<'7d' | '30d'>('30d');
 
   const chartData = useMemo(() => {
-    return dailyMetrics.map((item) => ({
+    const filtered = range === '7d' ? dailyMetrics.slice(-7) : dailyMetrics;
+    return filtered.map((item) => ({
       ...item,
-      date: new Date(item.date + 'T00:00:00').toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-      }),
+      date: formatDate(item.date),
     }));
-  }, [dailyMetrics]);
+  }, [dailyMetrics, range]);
 
-  const getStatusMessage = (): { text: string; color: string; bgClass: string } => {
-    if (metricsStatus.critical > 0) {
-      return {
-        text: `${metricsStatus.critical} metric${metricsStatus.critical > 1 ? 's' : ''} need attention`,
-        color: '#ef4444',
-        bgClass: 'bg-red-500/10',
-      };
-    }
-    if (metricsStatus.warning > 0) {
-      return {
-        text: `${metricsStatus.warning} metric${metricsStatus.warning > 1 ? 's' : ''} slightly off`,
-        color: '#eab308',
-        bgClass: 'bg-yellow-500/10',
-      };
-    }
-    return {
-      text: 'All metrics normal',
-      color: '#22c55e',
-      bgClass: 'bg-green-500/10',
-    };
-  };
+  const latest = dailyMetrics.length > 0 ? dailyMetrics[dailyMetrics.length - 1] : null;
 
-  const statusMessage = getStatusMessage();
+  // Find the most recent non-null values for display
+  const latestHrv = [...dailyMetrics].reverse().find((d) => d.hrv_ms != null)?.hrv_ms ?? null;
+  const latestRhr = [...dailyMetrics].reverse().find((d) => d.resting_hr != null)?.resting_hr ?? null;
+  const latestRr = [...dailyMetrics].reverse().find((d) => d.respiratory_rate != null)?.respiratory_rate ?? null;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white p-3 sm:p-6 md:p-8">
-      <h1 className="text-2xl sm:text-4xl font-bold mb-4 sm:mb-6">Health Monitor</h1>
-
-      {/* Status Banner */}
-      <div
-        className={`${statusMessage.bgClass} border border-white/10 rounded-3xl p-6 mb-8`}
-        style={{ borderColor: statusMessage.color + '40' }}
-      >
-        <p
-          className="text-lg font-semibold"
-          style={{ color: statusMessage.color }}
-        >
-          {statusMessage.text}
-        </p>
-      </div>
-
-      {/* Metric Cards Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6 mb-8 sm:mb-12">
-        {latestMetrics && (
-          <>
-            <MetricCard
-              label="Heart Rate Variability"
-              value={latestMetrics.hrv_ms ?? null}
-              unit="ms"
-            />
-            <MetricCard
-              label="Resting Heart Rate"
-              value={latestMetrics.resting_hr ?? null}
-              unit="bpm"
-            />
-            <MetricCard
-              label="Respiratory Rate"
-              value={latestMetrics.respiratory_rate ?? null}
-              unit="br/min"
-            />
-            <MetricCard
-              label="Blood Oxygen"
-              value={latestMetrics.spo2 ?? null}
-              unit="%"
-            />
-            <MetricCard
-              label="Stress Level"
-              value={latestMetrics.stress_avg ?? null}
-              unit="0-100"
-            />
-          </>
-        )}
-      </div>
-
-      {/* Individual Metric Charts */}
-      <div className="space-y-4 sm:space-y-8">
-        {/* HRV Chart */}
-        <div className="bg-zinc-900/50 border border-white/10 rounded-3xl p-3 sm:p-6">
-          <h3 className="text-lg font-bold mb-4">Heart Rate Variability Trend</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-              <XAxis
-                dataKey="date"
-                stroke="rgba(255,255,255,0.5)"
-                style={{ fontSize: '10px' }}
-                tick={{ fontSize: 10 }}
-                interval="preserveStartEnd"
-              />
-              <YAxis stroke="rgba(255,255,255,0.5)" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: '12px',
-                }}
-                labelStyle={{ color: 'white' }}
-              />
-              <ReferenceLine
-                y={baselines.hrv_baseline}
-                stroke="#06b6d4"
-                strokeDasharray="5 5"
-                label={{
-                  value: 'Baseline',
-                  position: 'right',
-                  fill: 'rgba(255,255,255,0.5)',
-                  fontSize: 12,
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="hrv_ms"
-                stroke="#06b6d4"
-                strokeWidth={2}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Resting HR Chart */}
-        <div className="bg-zinc-900/50 border border-white/10 rounded-3xl p-3 sm:p-6">
-          <h3 className="text-lg font-bold mb-4">Resting Heart Rate Trend</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-              <XAxis
-                dataKey="date"
-                stroke="rgba(255,255,255,0.5)"
-                style={{ fontSize: '10px' }}
-                tick={{ fontSize: 10 }}
-                interval="preserveStartEnd"
-              />
-              <YAxis stroke="rgba(255,255,255,0.5)" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: '12px',
-                }}
-                labelStyle={{ color: 'white' }}
-              />
-              <ReferenceLine
-                y={baselines.resting_hr_baseline}
-                stroke="#f43f5e"
-                strokeDasharray="5 5"
-                label={{
-                  value: 'Baseline',
-                  position: 'right',
-                  fill: 'rgba(255,255,255,0.5)',
-                  fontSize: 12,
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="resting_hr"
-                stroke="#f43f5e"
-                strokeWidth={2}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Respiratory Rate Chart */}
-        <div className="bg-zinc-900/50 border border-white/10 rounded-3xl p-3 sm:p-6">
-          <h3 className="text-lg font-bold mb-4">Respiratory Rate Trend</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-              <XAxis
-                dataKey="date"
-                stroke="rgba(255,255,255,0.5)"
-                style={{ fontSize: '10px' }}
-                tick={{ fontSize: 10 }}
-                interval="preserveStartEnd"
-              />
-              <YAxis stroke="rgba(255,255,255,0.5)" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: '12px',
-                }}
-                labelStyle={{ color: 'white' }}
-              />
-              <ReferenceLine
-                y={baselines.respiratory_rate_baseline}
-                stroke="#a855f7"
-                strokeDasharray="5 5"
-                label={{
-                  value: 'Baseline',
-                  position: 'right',
-                  fill: 'rgba(255,255,255,0.5)',
-                  fontSize: 12,
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="respiratory_rate"
-                stroke="#a855f7"
-                strokeWidth={2}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* SpO2 Chart */}
-        <div className="bg-zinc-900/50 border border-white/10 rounded-3xl p-3 sm:p-6">
-          <h3 className="text-lg font-bold mb-4">Blood Oxygen Trend</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-              <XAxis
-                dataKey="date"
-                stroke="rgba(255,255,255,0.5)"
-                style={{ fontSize: '10px' }}
-                tick={{ fontSize: 10 }}
-                interval="preserveStartEnd"
-              />
-              <YAxis stroke="rgba(255,255,255,0.5)" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: '12px',
-                }}
-                labelStyle={{ color: 'white' }}
-              />
-              <ReferenceLine
-                y={baselines.spo2_baseline}
-                stroke="#22c55e"
-                strokeDasharray="5 5"
-                label={{
-                  value: 'Baseline',
-                  position: 'right',
-                  fill: 'rgba(255,255,255,0.5)',
-                  fontSize: 12,
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="spo2"
-                stroke="#22c55e"
-                strokeWidth={2}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Stress Chart */}
-        <div className="bg-zinc-900/50 border border-white/10 rounded-3xl p-3 sm:p-6">
-          <h3 className="text-lg font-bold mb-4">Stress Level Trend</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-              <XAxis
-                dataKey="date"
-                stroke="rgba(255,255,255,0.5)"
-                style={{ fontSize: '10px' }}
-                tick={{ fontSize: 10 }}
-                interval="preserveStartEnd"
-              />
-              <YAxis stroke="rgba(255,255,255,0.5)" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: '12px',
-                }}
-                labelStyle={{ color: 'white' }}
-              />
-              <ReferenceLine
-                y={baselines.stress_baseline}
-                stroke="#3b82f6"
-                strokeDasharray="5 5"
-                label={{
-                  value: 'Baseline',
-                  position: 'right',
-                  fill: 'rgba(255,255,255,0.5)',
-                  fontSize: 12,
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="stress_avg"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+    <div>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold">Health Monitor</h1>
+        <div className="flex gap-1 bg-white/5 rounded-full p-1">
+          <button
+            onClick={() => setRange('7d')}
+            className={'px-3 py-1 rounded-full text-xs font-medium transition ' +
+              (range === '7d' ? 'bg-white/15 text-white' : 'text-white/40 hover:text-white/60')}
+          >
+            7D
+          </button>
+          <button
+            onClick={() => setRange('30d')}
+            className={'px-3 py-1 rounded-full text-xs font-medium transition ' +
+              (range === '30d' ? 'bg-white/15 text-white' : 'text-white/40 hover:text-white/60')}
+          >
+            30D
+          </button>
         </div>
       </div>
+
+      {/* Metric Sections */}
+      <MetricSection
+        title="Heart Rate Variability"
+        value={latestHrv}
+        unit="ms"
+        baseline={baselines.hrv_baseline}
+        data={chartData}
+        dataKey="hrv_ms"
+        color="#06b6d4"
+        higherIsBetter={true}
+        range={range}
+      />
+
+      <MetricSection
+        title="Resting Heart Rate"
+        value={latestRhr}
+        unit="bpm"
+        baseline={baselines.resting_hr_baseline}
+        data={chartData}
+        dataKey="resting_hr"
+        color="#f43f5e"
+        higherIsBetter={false}
+        range={range}
+      />
+
+      <MetricSection
+        title="Respiratory Rate"
+        value={latestRr}
+        unit="br/min"
+        baseline={baselines.respiratory_rate_baseline}
+        data={chartData}
+        dataKey="respiratory_rate"
+        color="#a855f7"
+        higherIsBetter={false}
+        range={range}
+      />
     </div>
   );
 }
