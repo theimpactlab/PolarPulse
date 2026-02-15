@@ -232,7 +232,7 @@ export default function ProfileClient({
             />
             {dob && (
               <p className="text-[10px] text-white/30 mt-1">
-                Age: {currentAge} years \u2014 used for biological age calculation
+                Age: {currentAge} years — used for biological age calculation
               </p>
             )}
           </div>
@@ -259,7 +259,7 @@ export default function ProfileClient({
             <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4 text-center">
               <div className="text-[11px] uppercase tracking-wider text-white/40 mb-1">Pace of Aging</div>
               <div className="text-4xl font-bold" style={{ color: healthspan.paceColor }}>
-                {healthspan.paceOfAging !== null ? healthspan.paceOfAging.toFixed(1) + "x" : "\u2013"}
+                {healthspan.paceOfAging !== null ? healthspan.paceOfAging.toFixed(1) + "x" : "–"}
               </div>
               <div className="text-xs mt-1" style={{ color: healthspan.paceColor + "99" }}>{healthspan.paceLabel}</div>
             </div>
@@ -332,7 +332,7 @@ export default function ProfileClient({
                 disabled={syncing}
                 className="flex-1 py-2.5 rounded-xl bg-emerald-500/20 text-sm font-medium text-emerald-400 hover:bg-emerald-500/30 transition disabled:opacity-50"
               >
-                {syncing ? "Syncing\u2026" : "Sync Now"}
+                {syncing ? "Syncing…" : "Sync Now"}
               </button>
             )}
           </div>
@@ -349,7 +349,7 @@ export default function ProfileClient({
             disabled={deleting}
             className="w-full text-left px-4 py-3.5 text-sm text-red-400 hover:bg-white/[0.04] transition border-b border-white/[0.06] disabled:opacity-50"
           >
-            {deleting ? "Deleting\u2026" : "Delete My Data"}
+            {deleting ? "Deleting…" : "Delete My Data"}
           </button>
           <button
             onClick={signOut}
