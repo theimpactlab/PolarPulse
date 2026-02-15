@@ -1,18 +1,9 @@
 "use client";
 
-import React, { useId } from "react";
+import React from "react";
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
-}
-
-// Polyfill for CSS.escape if not available
-function escapeId(id: string): string {
-  if (typeof CSS !== 'undefined' && CSS.escape) {
-    return CSS.escape(id);
-  }
-  // Fallback: escape special characters manually
-  return id.replace(/([!"#$%&'()*+,.\/:;<=?@[\\\]^`{|}~])/g, '\\$1');
 }
 
 function getRecoveryColor(pct: number): string {
@@ -38,7 +29,7 @@ export function RingProgress({
   value,
   max = 100,
   size = 120,
-  stroke = 10,
+  stroke = 12,
   label,
   sublabel,
   color,
@@ -55,7 +46,6 @@ export function RingProgress({
   colorZone?: "recovery" | "strain" | "sleep" | "none";
   unit?: string;
 }) {
-  const gradId = useId();
   const v = typeof value === "number" && Number.isFinite(value) ? value : null;
   const pct = v === null ? 0 : clamp(v / max, 0, 1);
   const pct100 = pct * 100;
@@ -83,19 +73,12 @@ export function RingProgress({
           width={size}
           height={size}
           className="rotate-[-90deg]"
-          style={{ filter: `drop-shadow(0 0 8px ${ringColor}33)` }}
         >
-          <defs>
-            <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor={ringColor} stopOpacity={1} />
-              <stop offset="100%" stopColor={ringColor} stopOpacity={0.55} />
-            </linearGradient>
-          </defs>
           <circle
             cx={size / 2}
             cy={size / 2}
             r={r}
-            stroke="rgba(255,255,255,0.08)"
+            stroke="rgba(255,255,255,0.1)"
             strokeWidth={stroke}
             fill="transparent"
           />
@@ -103,7 +86,7 @@ export function RingProgress({
             cx={size / 2}
             cy={size / 2}
             r={r}
-            stroke={`url(#${escapeId(gradId)})`}
+            stroke={ringColor}
             strokeWidth={stroke}
             strokeLinecap="round"
             fill="transparent"
