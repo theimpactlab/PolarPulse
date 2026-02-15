@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import { computeHealthspan, DailyMetricRow } from "@/src/lib/healthspan";
 
@@ -13,34 +13,110 @@ interface Connection {
 
 export default function ProfileClient({
   email,
+  userId,
   connection,
   dailyMetrics = [],
+  userAge = 30,
+  profileName = "",
+  profileDob = "",
+  profileAvatarUrl = "",
 }: {
   email: string;
+  userId: string;
   connection: Connection | null;
   dailyMetrics?: DailyMetricRow[];
+  userAge?: number;
+  profileName?: string;
+  profileDob?: string;
+  profileAvatarUrl?: string;
 }) {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
   const [deleting, setDeleting] = useState(false);
+
+  // Profile editing state
+  const [name, setName] = useState(profileName);
+  const [dob, setDob] = useState(profileDob);
+  const [avatarUrl, setAvatarUrl] = useState(profileAvatarUrl);
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // Compute healthspan
-  const healthspan = computeHealthspan(dailyMetrics, 30);
+  // Compute current age from DOB if set
+  const currentAge = dob
+    ? Math.floor((Date.now() - new Date(dob).getTime()) / 31557600000)
+    : userAge;
 
-  // Initials from email
-  const initials = email
-    ? email.split("@")[0].slice(0, 2).toUpperCase()
-    : "??";
+  // Compute healthspan with real age
+  const healthspan = computeHealthspan(dailyMetrics, currentAge);
 
-  // Name from email (capitalize first part)
-  const displayName = email
+  // Initials from name or email
+  const initials = name
+    ? name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2)
+    : email ? email.split("@")[0].slice(0, 2).toUpperCase() : "??";
+
+  // Display name
+  const displayName = name || (email
     ? email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, c => c.toUpperCase())
-    : "User";
+    : "User");
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `${userId}/avatar.${ext}`;
+
+      const { error: uploadErr } = await supabase.storage
+        .from("avatars")
+        .upload(path, file, { upsert: true });
+
+      if (uploadErr) throw uploadErr;
+
+      const { data: urlData } = supabase.storage
+        .from("avatars")
+        .getPublicUrl(path);
+
+      const publicUrl = urlData.publicUrl + "?t=" + Date.now();
+
+      await supabase
+        .from("profiles")
+        .update({ avatar_url: publicUrl })
+        .eq("id", userId);
+
+      setAvatarUrl(publicUrl);
+    } catch (err: any) {
+      alert("Upload failed: " + err.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function saveProfile() {
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      const updates: any = { name };
+      if (dob) updates.date_of_birth = dob;
+      const { error } = await supabase
+        .from("profiles")
+        .update(updates)
+        .eq("id", userId);
+      if (error) throw error;
+      setSaveMsg("Saved!");
+      setTimeout(() => setSaveMsg(""), 2000);
+    } catch (err: any) {
+      setSaveMsg("Error: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function syncNow() {
     setSyncing(true);
@@ -93,40 +169,101 @@ export default function ProfileClient({
   const lastSynced = connection?.last_synced_at
     ? timeAgo(new Date(connection.last_synced_at))
     : null;
-
   return (
     <div className="min-h-screen bg-black px-4 pt-10 pb-32">
-      {/* ── Profile Header ── */}
+      {/* Profile Header with Avatar */}
       <div className="flex flex-col items-center mb-8">
-        <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500 flex items-center justify-center text-2xl font-bold text-black mb-3">
-          {initials}
+        <div className="relative">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500 flex items-center justify-center text-2xl font-bold text-black overflow-hidden relative group"
+            disabled={uploading}
+          >
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+            ) : (
+              <span>{initials}</span>
+            )}
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+            </div>
+          </button>
+          {uploading && (
+            <div className="absolute inset-0 w-20 h-20 rounded-full bg-black/60 flex items-center justify-center">
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            </div>
+          )}
         </div>
-        <h1 className="text-xl font-semibold text-white">{displayName}</h1>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleAvatarUpload}
+        />
+        <h1 className="text-xl font-semibold text-white mt-3">{displayName}</h1>
         <p className="text-sm text-white/40 mt-0.5">{email}</p>
       </div>
 
-      {/* ── Healthspan Section ── */}
+      {/* Personal Info Section */}
+      <div className="mb-6">
+        <h2 className="text-[11px] uppercase tracking-widest font-medium text-white/40 mb-3 px-1">Personal Info</h2>
+        <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4 space-y-4">
+          <div>
+            <label className="text-xs text-white/40 block mb-1">Display Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name"
+              className="w-full bg-white/[0.06] border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/20 focus:outline-none focus:border-emerald-500/50 transition"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-white/40 block mb-1">Date of Birth</label>
+            <input
+              type="date"
+              value={dob}
+              onChange={(e) => setDob(e.target.value)}
+              className="w-full bg-white/[0.06] border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50 transition [color-scheme:dark]"
+            />
+            {dob && (
+              <p className="text-[10px] text-white/30 mt-1">
+                Age: {currentAge} years \u2014 used for biological age calculation
+              </p>
+            )}
+          </div>
+          <button
+            onClick={saveProfile}
+            disabled={saving}
+            className="w-full py-2.5 rounded-xl bg-emerald-500/20 text-sm font-medium text-emerald-400 hover:bg-emerald-500/30 transition disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save Changes"}
+          </button>
+          {saveMsg && <p className="text-xs text-center text-white/50">{saveMsg}</p>}
+        </div>
+      </div>
+      {/* Healthspan Section */}
       {healthspan.biologicalAge !== null && (
         <div className="mb-6">
           <h2 className="text-[11px] uppercase tracking-widest font-medium text-white/40 mb-3 px-1">Healthspan</h2>
           <div className="grid grid-cols-2 gap-3">
-            {/* Biological Age */}
             <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4 text-center">
               <div className="text-[11px] uppercase tracking-wider text-white/40 mb-1">Biological Age</div>
               <div className="text-4xl font-bold text-white">{healthspan.biologicalAge}</div>
               <div className="text-xs text-white/30 mt-1">years</div>
             </div>
-            {/* Pace of Aging */}
             <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4 text-center">
               <div className="text-[11px] uppercase tracking-wider text-white/40 mb-1">Pace of Aging</div>
               <div className="text-4xl font-bold" style={{ color: healthspan.paceColor }}>
-                {healthspan.paceOfAging !== null ? healthspan.paceOfAging.toFixed(1) + "x" : "–"}
+                {healthspan.paceOfAging !== null ? healthspan.paceOfAging.toFixed(1) + "x" : "\u2013"}
               </div>
               <div className="text-xs mt-1" style={{ color: healthspan.paceColor + "99" }}>{healthspan.paceLabel}</div>
             </div>
           </div>
-
-          {/* Metric Breakdown */}
           {healthspan.metricBreakdown.length > 0 && (
             <div className="mt-3 bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4">
               <div className="text-[11px] uppercase tracking-wider text-white/40 mb-3">Health Score: {healthspan.healthScore}/100</div>
@@ -135,10 +272,7 @@ export default function ProfileClient({
                   <div key={m.label} className="flex items-center justify-between">
                     <span className="text-xs text-white/50 w-20">{m.label}</span>
                     <div className="flex-1 mx-3 h-1.5 rounded-full bg-white/[0.08] overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{ width: m.score + "%", backgroundColor: m.color }}
-                      />
+                      <div className="h-full rounded-full transition-all duration-500" style={{ width: m.score + "%", backgroundColor: m.color }} />
                     </div>
                     <span className="text-xs text-white/60 w-20 text-right">{m.value}</span>
                   </div>
@@ -149,8 +283,7 @@ export default function ProfileClient({
           )}
         </div>
       )}
-
-      {/* ── Polar Connection ── */}
+      {/* Polar Connection */}
       <div className="mb-6">
         <h2 className="text-[11px] uppercase tracking-widest font-medium text-white/40 mb-3 px-1">Polar Connection</h2>
         <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4">
@@ -168,7 +301,6 @@ export default function ProfileClient({
               </span>
             )}
           </div>
-
           {connection && (
             <>
               {lastSynced && (
@@ -187,7 +319,6 @@ export default function ProfileClient({
               )}
             </>
           )}
-
           <div className="flex gap-2">
             <a
               href="/api/polar/connect"
@@ -201,7 +332,7 @@ export default function ProfileClient({
                 disabled={syncing}
                 className="flex-1 py-2.5 rounded-xl bg-emerald-500/20 text-sm font-medium text-emerald-400 hover:bg-emerald-500/30 transition disabled:opacity-50"
               >
-                {syncing ? "Syncing…" : "Sync Now"}
+                {syncing ? "Syncing\u2026" : "Sync Now"}
               </button>
             )}
           </div>
@@ -209,7 +340,7 @@ export default function ProfileClient({
         </div>
       </div>
 
-      {/* ── Account ── */}
+      {/* Account */}
       <div className="mb-6">
         <h2 className="text-[11px] uppercase tracking-widest font-medium text-white/40 mb-3 px-1">Account</h2>
         <div className="bg-white/[0.04] border border-white/[0.06] rounded-2xl overflow-hidden">
@@ -218,7 +349,7 @@ export default function ProfileClient({
             disabled={deleting}
             className="w-full text-left px-4 py-3.5 text-sm text-red-400 hover:bg-white/[0.04] transition border-b border-white/[0.06] disabled:opacity-50"
           >
-            {deleting ? "Deleting…" : "Delete My Data"}
+            {deleting ? "Deleting\u2026" : "Delete My Data"}
           </button>
           <button
             onClick={signOut}
