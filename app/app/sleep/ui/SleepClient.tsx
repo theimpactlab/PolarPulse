@@ -23,16 +23,8 @@ type Session = {
   latency_min: number | null;
 };
 
-type Stage = {
-  stage: string;
-  minutes: number;
-};
-
-type HRPoint = {
-  t: number;
-  hr: number;
-};
-
+type Stage = { stage: string; minutes: number };
+type HRPoint = { t: number; hr: number };
 type RecentSleep = {
   date: string;
   score: number | null;
@@ -50,18 +42,22 @@ interface SleepClientProps {
   recentSleep: RecentSleep[];
 }
 
-function getSleepQualityColor(score: number | null): string {
-  if (score === null || score === undefined) return "text-gray-400";
-  if (score >= 85) return "text-green-400";
-  if (score >= 70) return "text-blue-400";
-  if (score >= 55) return "text-yellow-400";
-  return "text-red-400";
+function getSleepColor(score: number | null): string {
+  if (score === null) return "#666666";
+  if (score >= 85) return "#4ade80";
+  if (score >= 70) return "#60a5fa";
+  if (score >= 55) return "#facc15";
+  return "#f87171";
 }
 
 function formatTime(isoString: string | null): string {
   if (!isoString) return "--:--";
   const date = new Date(isoString);
-  return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 function getDateDisplay(dateStr: string): string {
@@ -70,14 +66,15 @@ function getDateDisplay(dateStr: string): string {
   today.setUTCHours(0, 0, 0, 0);
   const yesterday = new Date(today);
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  
   const dateNorm = new Date(dateStr + "T00:00:00Z");
   dateNorm.setUTCHours(0, 0, 0, 0);
-  
   if (dateNorm.getTime() === today.getTime()) return "Tonight";
   if (dateNorm.getTime() === yesterday.getTime()) return "Last Night";
-  
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", weekday: "short" });
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    weekday: "short",
+  });
 }
 
 function getPrevDate(dateStr: string): string {
@@ -92,6 +89,13 @@ function getNextDate(dateStr: string): string {
   return date.toISOString().slice(0, 10);
 }
 
+function fmtDuration(mins: number | null): string {
+  if (!mins) return "--";
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
 export default function SleepClient({
   date,
   sleepScore,
@@ -100,11 +104,13 @@ export default function SleepClient({
   hrSeries,
   recentSleep,
 }: SleepClientProps) {
+  const sleepColor = getSleepColor(sleepScore);
+
   return (
     <div className="min-h-screen bg-black text-white/90">
       {/* Header with date navigation */}
-      <div className="sticky top-0 z-40 bg-black/80 backdrop-blur border-b border-white/10">
-        <div className="flex items-center justify-between px-4 py-4">
+      <div className="sticky top-0 z-40 bg-black/80 backdrop-blur border-b border-white/[0.06]">
+        <div className="flex items-center justify-between px-4 py-3">
           <Link
             href={`/app/sleep?date=${getPrevDate(date)}`}
             className="p-2 hover:bg-white/5 rounded-lg transition"
@@ -126,8 +132,7 @@ export default function SleepClient({
       </div>
 
       {/* Content */}
-      <div className="p-4 space-y-6 pb-24">
-        {/* No data state */}
+      <div className="px-4 pb-28">
         {!session ? (
           <div className="text-center py-16">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mx-auto mb-4 text-white/40">
@@ -138,124 +143,76 @@ export default function SleepClient({
           </div>
         ) : (
           <>
-            {/* Sleep Score Ring with Coach */}
-            <div className="flex items-center justify-center pt-4">
-              <div className="relative">
-                <RingProgress
-                  value={sleepScore ?? 0}
-                  max={100}
-                  size={200}
-                  stroke={8}
-                  color={
-                    sleepScore === null || sleepScore === undefined
-                      ? "#999999"
-                      : sleepScore >= 85
-                        ? "#4ade80"
-                        : sleepScore >= 70
-                          ? "#60a5fa"
-                          : sleepScore >= 55
-                            ? "#facc15"
-                            : "#f87171"
-                  }
-                
-                  label={sleepScore != null ? String(sleepScore) : "--"}
-                  sublabel="Sleep Score"
-                />
-
-              </div>
+            {/* Sleep Score Ring */}
+            <div className="flex flex-col items-center pt-6 pb-2">
+              <RingProgress
+                value={sleepScore ?? 0}
+                max={100}
+                size={200}
+                stroke={10}
+                color={sleepColor}
+                label={sleepScore != null ? String(sleepScore) : "--"}
+                sublabel="Sleep Score"
+              />
             </div>
 
             {/* Sleep Coach */}
             {sleepScore !== null && (
-              <SleepCoach
-                sleepGotMin={session?.duration_min ?? null}
-                sleepNeededMin={session?.sleep_needed_min ?? null}
-                sleepDebtMin={session?.sleep_debt_min ?? null}
-                sleepPerformancePct={session?.sleep_performance_pct ?? null}
-              />
+              <div className="mt-4">
+                <SleepCoach
+                  sleepGotMin={session?.duration_min ?? null}
+                  sleepNeededMin={session?.sleep_needed_min ?? null}
+                  sleepDebtMin={session?.sleep_debt_min ?? null}
+                  sleepPerformancePct={session?.sleep_performance_pct ?? null}
+                />
+              </div>
             )}
 
-            {/* Sleep Metrics Grid */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Duration */}
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="text-white/60 text-xs font-medium mb-2">Duration</div>
-                <div className="text-xl font-semibold">
-                  {session.duration_min ? `${Math.round(session.duration_min / 60)}h ${session.duration_min % 60}m` : "--"}
-                </div>
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-2 gap-3 mt-6">
+              <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4">
+                <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Duration</div>
+                <div className="text-xl font-semibold">{fmtDuration(session.duration_min)}</div>
               </div>
-
-              {/* Efficiency */}
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="text-white/60 text-xs font-medium mb-2">Efficiency</div>
+              <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4">
+                <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Efficiency</div>
                 <div className="text-xl font-semibold">
                   {session.efficiency_pct ? `${Math.round(session.efficiency_pct)}%` : "--"}
                 </div>
               </div>
-
-              {/* Time in Bed */}
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="text-white/60 text-xs font-medium mb-2">Time in Bed</div>
-                <div className="text-xl font-semibold">
-                  {session.time_in_bed_min ? `${Math.round(session.time_in_bed_min / 60)}h ${session.time_in_bed_min % 60}m` : "--"}
-                </div>
+              <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4">
+                <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Time in Bed</div>
+                <div className="text-xl font-semibold">{fmtDuration(session.time_in_bed_min)}</div>
               </div>
-
-              {/* Latency */}
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="text-white/60 text-xs font-medium mb-2">Latency</div>
+              <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4">
+                <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Latency</div>
                 <div className="text-xl font-semibold">
                   {session.latency_min ? `${Math.round(session.latency_min)}m` : "--"}
                 </div>
               </div>
-
-              {/* Avg HR */}
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="text-white/60 text-xs font-medium mb-2">Avg HR</div>
+              <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4">
+                <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Avg HR</div>
                 <div className="text-xl font-semibold">
                   {session.avg_hr ? `${Math.round(session.avg_hr)} bpm` : "--"}
                 </div>
               </div>
-
-              {/* Resp Rate */}
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="text-white/60 text-xs font-medium mb-2">Resp Rate</div>
+              <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4">
+                <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Resp Rate</div>
                 <div className="text-xl font-semibold">
                   {session.avg_resp_rate ? `${Math.round(session.avg_resp_rate)}/min` : "--"}
                 </div>
               </div>
             </div>
 
-            {/* Sleep Performance */}
-            {session.sleep_performance_pct !== null && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-white/60 text-xs font-medium">Sleep Performance</div>
-                  <div className="text-sm font-semibold">{Math.round(session.sleep_performance_pct)}%</div>
-                </div>
-                <div className="w-full bg-white/5 rounded-full h-2">
-                  <div
-                    className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full transition-all"
-                    style={{ width: `${Math.min(session.sleep_performance_pct, 100)}%` }}
-                  ></div>
-                </div>
-                {session.sleep_needed_min && session.duration_min && (
-                  <div className="text-white/50 text-xs mt-2">
-                    Got {session.duration_min} min of {session.sleep_needed_min} min needed
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* Sleep Times */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+            <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4 mt-3">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div className="text-white/60 text-xs font-medium mb-1">Sleep Time</div>
+                  <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Sleep Time</div>
                   <div className="text-lg font-semibold">{formatTime(session.sleep_start)}</div>
                 </div>
                 <div>
-                  <div className="text-white/60 text-xs font-medium mb-1">Wake Time</div>
+                  <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Wake Time</div>
                   <div className="text-lg font-semibold">{formatTime(session.sleep_end)}</div>
                 </div>
               </div>
@@ -263,52 +220,48 @@ export default function SleepClient({
 
             {/* Sleep Stages */}
             {stages.length > 0 && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="text-white/60 text-xs font-medium mb-3">Sleep Stages</div>
-                <SleepStagesBar stages={Object.fromEntries(
-                  stages.map(s => [
-                    s.stage.toLowerCase() as "awake" | "light" | "deep" | "rem",
-                    s.minutes
-                  ])
-                )} />
+              <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4 mt-3">
+                <div className="text-white/50 text-[10px] uppercase tracking-wider mb-3">Sleep Stages</div>
+                <SleepStagesBar
+                  stages={Object.fromEntries(
+                    stages.map(
+                      (s) =>
+                        [
+                          s.stage.toLowerCase() as "awake" | "light" | "deep" | "rem",
+                          s.minutes,
+                        ] as const
+                    )
+                  )}
+                />
               </div>
             )}
 
             {/* Heart Rate Chart */}
             {hrSeries.length > 0 && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="text-white/60 text-xs font-medium mb-3">Heart Rate</div>
+              <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4 mt-3">
+                <div className="text-white/50 text-[10px] uppercase tracking-wider mb-3">Heart Rate</div>
                 <SleepHRLine points={hrSeries} />
               </div>
             )}
 
             {/* 7-day Sleep Trend */}
             {recentSleep.length > 0 && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                <div className="text-white/60 text-xs font-medium mb-3">Sleep Trends (7 days)</div>
-                <div className="flex items-flex-end justify-between gap-1 h-20">
+              <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4 mt-3">
+                <div className="text-white/50 text-[10px] uppercase tracking-wider mb-3">Sleep Trends (7 Days)</div>
+                <div className="flex items-end justify-between gap-1 h-20">
                   {recentSleep.map((sleep, idx) => {
                     const score = sleep.score ?? 0;
-                    const maxScore = 100;
-                    const height = (score / maxScore) * 100;
+                    const height = (score / 100) * 100;
                     const dateObj = new Date(sleep.date + "T00:00:00Z");
                     const dayLabel = dateObj.toLocaleDateString("en-US", { weekday: "narrow" });
-                    
+                    const c = getSleepColor(score);
                     return (
                       <div key={idx} className="flex-1 flex flex-col items-center justify-end gap-1">
                         <div
-                          className={`w-full rounded transition-all ${
-                            score >= 85
-                              ? "bg-green-500"
-                              : score >= 70
-                                ? "bg-blue-500"
-                                : score >= 55
-                                  ? "bg-yellow-500"
-                                  : "bg-red-500"
-                          }`}
-                          style={{ height: `${Math.max(height, 4)}%` }}
-                        ></div>
-                        <div className="text-white/50 text-xs">{dayLabel}</div>
+                          className="w-full rounded-sm transition-all"
+                          style={{ height: `${Math.max(height, 4)}%`, backgroundColor: c }}
+                        />
+                        <div className="text-white/40 text-[9px]">{dayLabel}</div>
                       </div>
                     );
                   })}
