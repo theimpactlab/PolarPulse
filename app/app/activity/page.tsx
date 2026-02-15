@@ -76,7 +76,7 @@ export default async function StrainPage() {
   const [strainRes, strainHistoryRes, workoutsRes, recoveryRes] = await Promise.all([
     supabase
       .from("daily_metrics")
-      .select("strain_21, active_calories")
+      .select("strain_21, active_calories, strain_target_low, strain_target_high, recovery_score")
       .eq("user_id", userRes.user.id)
       .order("date", { ascending: false })
       .limit(1)
@@ -107,11 +107,11 @@ export default async function StrainPage() {
 
   const strain = strainRes.data?.strain_21 ?? 0;
   const calories = strainRes.data?.active_calories ?? null;
-  const recovery = recoveryRes.data?.ans_charge ?? null;
+  const recovery = strainRes.data?.recovery_score ?? null;
   const rows = workoutsRes.data ?? [];
   const strainHistory = strainHistoryRes.data ?? [];
   const last7 = strainHistory.slice(-7);
-  const target = getTargetRange(recovery);
+  const target = { low: strainRes.data?.strain_target_low ?? 8, high: strainRes.data?.strain_target_high ?? 14 };
 
   const byDate = rows.reduce<Record<string, WorkoutRow[]>>((acc, r) => {
     acc[r.workout_date] = acc[r.workout_date] ?? [];
