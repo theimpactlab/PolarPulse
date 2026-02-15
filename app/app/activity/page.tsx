@@ -53,18 +53,9 @@ function getStrainLabel(strain: number): string {
   if (strain >= 6) return "Light";
   return "Minimal";
 }
-
-function getTargetRange(recovery: number | null): { low: number; high: number } {
-  if (recovery === null) return { low: 8, high: 14 };
-  if (recovery >= 67) return { low: 14, high: 18 };
-  if (recovery >= 34) return { low: 8, high: 14 };
-  return { low: 4, high: 8 };
-}
-
 export default async function StrainPage() {
   const supabase = await createSupabaseServerClient();
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
-
   if (uErr || !userRes.user) {
     return <div className="text-white/80 p-4">Not signed in.</div>;
   }
@@ -73,7 +64,7 @@ export default async function StrainPage() {
   const from30 = new Date(today);
   from30.setUTCDate(from30.getUTCDate() - 30);
 
-  const [strainRes, strainHistoryRes, workoutsRes, recoveryRes] = await Promise.all([
+  const [strainRes, strainHistoryRes, workoutsRes] = await Promise.all([
     supabase
       .from("daily_metrics")
       .select("strain_21, active_calories, strain_target_low, strain_target_high, recovery_score")
@@ -96,22 +87,17 @@ export default async function StrainPage() {
       .order("workout_date", { ascending: false })
       .order("start_time", { ascending: false })
       .returns<WorkoutRow[]>(),
-    supabase
-      .from("nightly_recharge")
-      .select("ans_charge")
-      .eq("user_id", userRes.user.id)
-      .order("date", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
   ]);
 
   const strain = strainRes.data?.strain_21 ?? 0;
-  const calories = strainRes.data?.active_calories ?? null;
   const recovery = strainRes.data?.recovery_score ?? null;
   const rows = workoutsRes.data ?? [];
   const strainHistory = strainHistoryRes.data ?? [];
   const last7 = strainHistory.slice(-7);
-  const target = { low: strainRes.data?.strain_target_low ?? 8, high: strainRes.data?.strain_target_high ?? 14 };
+  const target = {
+    low: strainRes.data?.strain_target_low ?? 8,
+    high: strainRes.data?.strain_target_high ?? 14,
+  };
 
   const byDate = rows.reduce<Record<string, WorkoutRow[]>>((acc, r) => {
     acc[r.workout_date] = acc[r.workout_date] ?? [];
@@ -122,7 +108,6 @@ export default async function StrainPage() {
 
   const strainColor = getStrainColor(strain);
   const strainLabel = getStrainLabel(strain);
-
   return (
     <div className="min-h-screen bg-black text-white/90">
       <div className="flex flex-col items-center pt-8 pb-2">
@@ -152,12 +137,9 @@ export default async function StrainPage() {
         />
       </div>
 
+      {/* Stats - 2 col, no calories */}
       <div className="px-4 mt-6">
-        <div className="grid grid-cols-3 gap-3">
-          <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 text-center">
-            <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Calories</div>
-            <div className="text-lg font-semibold tabular-nums">{calories ?? "--"}</div>
-          </div>
+        <div className="grid grid-cols-2 gap-3">
           <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 text-center">
             <div className="text-white/50 text-[10px] uppercase tracking-wider mb-1">Workouts</div>
             <div className="text-lg font-semibold tabular-nums">{rows.length}</div>
@@ -170,33 +152,72 @@ export default async function StrainPage() {
           </div>
         </div>
       </div>
-
+      {/* 7-Day Strain Line Chart */}
       {last7.length > 1 && (
         <div className="px-4 mt-6">
           <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4">
             <div className="text-white/50 text-[10px] uppercase tracking-wider mb-3">Strain (7 Days)</div>
-            <div className="flex items-end justify-between gap-1 h-16">
+            <svg viewBox="0 0 200 80" className="w-full h-20" preserveAspectRatio="none">
+              {/* Grid lines */}
+              <line x1="0" y1="20" x2="200" y2="20" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />
+              <line x1="0" y1="40" x2="200" y2="40" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />
+              <line x1="0" y1="60" x2="200" y2="60" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />
+              {/* Line path */}
+              <polyline
+                fill="none"
+                stroke="url(#strainGrad)"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                points={last7.map((d: { date: string; strain_21: number | null }, i: number) => {
+                  const x = last7.length === 1 ? 100 : (i / (last7.length - 1)) * 196 + 2;
+                  const y = 76 - ((d.strain_21 ?? 0) / 21) * 72;
+                  return `${x},${y}`;
+                }).join(" ")}
+              />
+              {/* Gradient fill under line */}
+              <polygon
+                fill="url(#strainFill)"
+                opacity="0.15"
+                points={[
+                  ...last7.map((d: { date: string; strain_21: number | null }, i: number) => {
+                    const x = last7.length === 1 ? 100 : (i / (last7.length - 1)) * 196 + 2;
+                    const y = 76 - ((d.strain_21 ?? 0) / 21) * 72;
+                    return `${x},${y}`;
+                  }),
+                  `${last7.length === 1 ? 100 : 198},80`,
+                  "2,80"
+                ].join(" ")}
+              />
+              {/* Dots */}
               {last7.map((d: { date: string; strain_21: number | null }, i: number) => {
-                const s = d.strain_21 ?? 0;
-                const pct = (s / 21) * 100;
-                const c = getStrainColor(s);
+                const x = last7.length === 1 ? 100 : (i / (last7.length - 1)) * 196 + 2;
+                const y = 76 - ((d.strain_21 ?? 0) / 21) * 72;
+                return <circle key={i} cx={x} cy={y} r="3" fill={getStrainColor(d.strain_21 ?? 0)} />;
+              })}
+              <defs>
+                <linearGradient id="strainGrad" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#6366f1" />
+                  <stop offset="50%" stopColor="#22d3ee" />
+                  <stop offset="100%" stopColor="#f97316" />
+                </linearGradient>
+                <linearGradient id="strainFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#22d3ee" />
+                  <stop offset="100%" stopColor="transparent" />
+                </linearGradient>
+              </defs>
+            </svg>
+            <div className="flex justify-between mt-1">
+              {last7.map((d: { date: string; strain_21: number | null }, i: number) => {
                 const dt = new Date(d.date + "T00:00:00Z");
                 const day = dt.toLocaleDateString("en-US", { weekday: "narrow" });
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-center justify-end gap-1">
-                    <div
-                      className="w-full rounded-sm transition-all"
-                      style={{ height: `${Math.max(pct, 4)}%`, backgroundColor: c }}
-                    />
-                    <div className="text-white/40 text-[9px]">{day}</div>
-                  </div>
-                );
+                return <div key={i} className="text-white/40 text-[9px] flex-1 text-center">{day}</div>;
               })}
             </div>
           </div>
         </div>
       )}
-
+      {/* Recent Workouts */}
       <div className="px-4 mt-6 pb-28">
         <div className="text-white/50 text-[10px] uppercase tracking-wider mb-3">Recent Workouts</div>
         {dates.length === 0 ? (
@@ -207,7 +228,11 @@ export default async function StrainPage() {
           <div className="space-y-3">
             {dates.map((d) => {
               const dt = new Date(d + "T00:00:00Z");
-              const label = dt.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+              const label = dt.toLocaleDateString("en-GB", {
+                weekday: "short",
+                day: "2-digit",
+                month: "short",
+              });
               return (
                 <div key={d}>
                   <div className="text-white/40 text-xs font-medium mb-2">{label}</div>
