@@ -3,7 +3,6 @@ import ProfileClient from "./ui/ProfileClient";
 
 export default async function ProfilePage() {
   const supabase = await createSupabaseServerClient();
-
   const { data: userRes, error: uErr } = await supabase.auth.getUser();
   if (uErr || !userRes.user) return <div className="text-white/80">Not signed in.</div>;
 
@@ -13,8 +12,14 @@ export default async function ProfilePage() {
     .select("connected_at,last_synced_at,expires_at,scope")
     .maybeSingle();
 
-  // If table doesn't exist yet or RLS blocks it, show as disconnected
   const connection = cErr ? null : conn;
+
+  // Fetch profile data (name, DOB, avatar)
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("name, date_of_birth, avatar_url")
+    .eq("id", userRes.user.id)
+    .maybeSingle();
 
   // Fetch last 30 days of daily metrics for healthspan calculation
   const thirtyDaysAgo = new Date();
@@ -25,11 +30,22 @@ export default async function ProfilePage() {
     .gte("date", thirtyDaysAgo.toISOString().split("T")[0])
     .order("date", { ascending: false });
 
+  // Compute user age from DOB
+  const dob = profile?.date_of_birth;
+  const userAge = dob
+    ? Math.floor((Date.now() - new Date(dob).getTime()) / 31557600000)
+    : 30;
+
   return (
     <ProfileClient
       email={userRes.user.email ?? ""}
+      userId={userRes.user.id}
       connection={connection}
       dailyMetrics={metricsRows ?? []}
+      userAge={userAge}
+      profileName={profile?.name ?? ""}
+      profileDob={profile?.date_of_birth ?? ""}
+      profileAvatarUrl={profile?.avatar_url ?? ""}
     />
   );
 }
