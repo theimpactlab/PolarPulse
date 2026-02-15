@@ -16,7 +16,7 @@ export default async function DashboardPage() {
   const from = new Date(today);
   from.setUTCDate(from.getUTCDate() - 13);
 
-  // Run all four queries in parallel for faster loading
+  // Run all queries in parallel
   const [metricsRes, rechargeRes, baselinesRes, sleepRes] = await Promise.all([
     supabase
       .from("daily_metrics")
@@ -24,25 +24,24 @@ export default async function DashboardPage() {
       .gte("date", iso(from))
       .lte("date", iso(today))
       .order("date", { ascending: true }),
-
+    // Get the most recent nightly recharge (not just today)
     supabase
       .from("nightly_recharge")
       .select("hrv_avg,hr_avg,hr_min,breathing_rate_avg,ans_charge,ans_charge_status")
-      .eq("date", iso(today))
+      .order("date", { ascending: false })
+      .limit(1)
       .maybeSingle(),
-
     supabase
       .from("baselines_28d")
       .select("metric,avg")
       .in("metric", ["hrv_ms", "resting_hr", "respiratory_rate", "sleep_score"])
       .order("computed_on", { ascending: false })
       .limit(4),
-
+    // Get the most recent sleep session (not just today)
     supabase
       .from("sleep_sessions")
-      .select("duration_min")
-      .eq("sleep_date", iso(today))
-      .order("sleep_start", { ascending: false })
+      .select("duration_min,sleep_needed_min,sleep_debt_min,sleep_performance_pct,sleep_score")
+      .order("sleep_date", { ascending: false })
       .limit(1)
       .maybeSingle(),
   ]);
@@ -53,6 +52,8 @@ export default async function DashboardPage() {
       recharge={rechargeRes.data}
       baselines={baselinesRes.data ?? []}
       sleepGotMin={sleepRes.data?.duration_min ?? null}
+      sleepNeededMin={sleepRes.data?.sleep_needed_min ?? null}
+      sleepScore={sleepRes.data?.sleep_score ?? null}
     />
   );
 }
