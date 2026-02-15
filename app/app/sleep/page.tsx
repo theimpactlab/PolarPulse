@@ -23,7 +23,7 @@ export default async function SleepPage({
   const selectedDate =
     typeof sp?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date)
       ? sp.date
-      : iso(today);
+      : iso(yday);
 
   // Main session
   const { data: sessionRow } = await supabase
