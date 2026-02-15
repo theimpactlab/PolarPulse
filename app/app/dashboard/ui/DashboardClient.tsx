@@ -90,9 +90,10 @@ function trendColor(current: number | null, baseline: number | null, higherIsBet
 
 function fmtMins(m: number | null): string {
   if (m === null) return "\u2013";
-  const h = Math.floor(m / 60);
-  const r = Math.round(m % 60);
-  return h > 0 ? h + "h " + r + "m" : r + "m";
+  const h = Math.floor(Math.abs(m) / 60);
+  const r = Math.round(Math.abs(m) % 60);
+  const sign = m < 0 ? "-" : "";
+  return h > 0 ? sign + h + "h " + r + "m" : sign + r + "m";
 }
 
 export default function DashboardClient({
@@ -129,8 +130,11 @@ export default function DashboardClient({
   const rhrBase = baselineMap["resting_hr"] ?? null;
   const rrBase = baselineMap["respiratory_rate"] ?? null;
 
-  // 7-day data for mini sparkline
+  // 7-day data for bar chart
   const last7 = rows.slice(-7);
+
+  // Find most recent sleep debt from any day
+  const sleepDebt = today?.sleep_debt_min ?? [...rows].reverse().find(r => r.sleep_debt_min != null)?.sleep_debt_min ?? null;
 
   return (
     <div className="pb-28">
@@ -147,18 +151,11 @@ export default function DashboardClient({
         </p>
       </div>
 
-      {/* ── Three Dials ── WHOOP-style top row */}
+      {/* \u2500\u2500 Three Dials \u2500\u2500 WHOOP-style top row */}
       <div className="grid grid-cols-3 gap-2 px-4 mb-6">
         {/* Recovery Dial */}
         <Link href="/app/health" className="flex flex-col items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl py-4 px-2 hover:bg-white/[0.07] transition">
-          <RingProgress
-            value={recovery}
-            max={100}
-            size={90}
-            stroke={8}
-            unit="%"
-            colorZone="recovery"
-          />
+          <RingProgress value={recovery} max={100} size={90} stroke={8} unit="%" colorZone="recovery" />
           <div className="mt-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: recoveryColor(recovery) }}>
             Recovery
           </div>
@@ -167,30 +164,15 @@ export default function DashboardClient({
 
         {/* Strain Dial */}
         <Link href="/app/activity" className="flex flex-col items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl py-4 px-2 hover:bg-white/[0.07] transition">
-          <RingProgress
-            value={strain21}
-            max={21}
-            size={90}
-            stroke={8}
-                        colorZone="strain"
-            sublabel={strain21 !== null ? strain21.toFixed(1) + " / 21" : ""}
-          />
+          <RingProgress value={strain21} max={21} size={90} stroke={8} colorZone="strain" sublabel={strain21 !== null ? strain21.toFixed(1) + " / 21" : ""} />
           <div className="mt-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: strainColor(strain21) }}>
             Strain
           </div>
-          
         </Link>
 
         {/* Sleep Dial */}
         <Link href="/app/sleep" className="flex flex-col items-center bg-white/[0.04] border border-white/[0.06] rounded-2xl py-4 px-2 hover:bg-white/[0.07] transition">
-          <RingProgress
-            value={displaySleepScore}
-            max={100}
-            size={90}
-            stroke={8}
-            unit="%"
-            colorZone="sleep"
-          />
+          <RingProgress value={displaySleepScore} max={100} size={90} stroke={8} unit="%" colorZone="sleep" />
           <div className="mt-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: sleepColor(displaySleepScore) }}>
             Sleep
           </div>
@@ -198,7 +180,7 @@ export default function DashboardClient({
         </Link>
       </div>
 
-      {/* ── Health Vitals Row ── */}
+      {/* \u2500\u2500 Health Vitals Row \u2500\u2500 */}
       <div className="px-4 mb-6">
         <div className="text-white/50 text-[10px] uppercase tracking-wider mb-2">Health Monitor</div>
         <div className="grid grid-cols-3 gap-2">
@@ -229,26 +211,26 @@ export default function DashboardClient({
         </div>
       </div>
 
-      {/* ── 7-Day Recovery Trend ── */}
+      {/* \u2500\u2500 7-Day Recovery Bar Chart \u2500\u2500 */}
       {last7.length > 1 && (
         <div className="px-4 mb-6">
           <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4">
             <div className="text-white/50 text-[10px] uppercase tracking-wider mb-3">Recovery Trend (7 Days)</div>
-            <div className="flex items-end justify-between gap-1 h-16">
+            <div className="flex items-end justify-between gap-1.5" style={{ height: 80 }}>
               {last7.map((d, i) => {
                 const v = d.recovery_score ?? 0;
-                const pct = Math.max((v / 100) * 100, 4);
+                const barH = Math.max((v / 100) * 68, 3);
                 const c = recoveryColor(d.recovery_score);
                 const dt = new Date(d.date + "T00:00:00Z");
                 const day = dt.toLocaleDateString("en-US", { weekday: "narrow" });
                 return (
-                  <div key={i} className="flex-1 flex flex-col items-center justify-end gap-1">
-                    <div className="text-[9px] text-white/40 tabular-nums">{d.recovery_score ?? ""}</div>
+                  <div key={i} className="flex-1 flex flex-col items-center justify-end" style={{ height: "100%" }}>
+                    <div className="text-[9px] text-white/50 tabular-nums mb-1">{d.recovery_score ?? ""}</div>
                     <div
-                      className="w-full rounded-sm transition-all"
-                      style={{ height: pct + "%", backgroundColor: c }}
+                      className="w-full rounded-sm"
+                      style={{ height: barH, backgroundColor: c, minWidth: 8 }}
                     />
-                    <div className="text-white/40 text-[9px]">{day}</div>
+                    <div className="text-white/40 text-[9px] mt-1">{day}</div>
                   </div>
                 );
               })}
@@ -257,7 +239,7 @@ export default function DashboardClient({
         </div>
       )}
 
-      {/* ── Strain Coach ── */}
+      {/* \u2500\u2500 Strain Coach \u2500\u2500 */}
       <div className="px-4 mb-5">
         <StrainCoach
           currentStrain={strain21}
@@ -267,26 +249,20 @@ export default function DashboardClient({
         />
       </div>
 
-      {/* ── Sleep Coach ── */}
+      {/* \u2500\u2500 Sleep Coach \u2500\u2500 */}
       <div className="px-4 mb-5">
         <SleepCoach
           sleepGotMin={sleepGotMin}
           sleepNeededMin={sleepNeededMin ?? today?.sleep_needed_min ?? null}
-          sleepDebtMin={today?.sleep_debt_min ?? null}
+          sleepDebtMin={sleepDebt}
           sleepPerformancePct={today?.sleep_performance_pct ?? null}
         />
       </div>
 
-      {/* ── Activity Summary ── */}
+      {/* \u2500\u2500 Activity Summary \u2500\u2500 */}
       <div className="px-4 mb-6">
         <div className="text-white/50 text-[10px] uppercase tracking-wider mb-2">Today&apos;s Activity</div>
-        <div className="grid grid-cols-3 gap-2">
-          <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 text-center">
-            <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">Steps</div>
-            <div className="text-lg font-semibold tabular-nums">
-              {today?.steps != null ? today.steps.toLocaleString() : "\u2013"}
-            </div>
-          </div>
+        <div className="grid grid-cols-2 gap-2">
           <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 text-center">
             <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">Calories</div>
             <div className="text-lg font-semibold tabular-nums">
@@ -296,7 +272,7 @@ export default function DashboardClient({
           <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 text-center">
             <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">Sleep Debt</div>
             <div className="text-lg font-semibold tabular-nums">
-              {today?.sleep_debt_min != null ? fmtMins(today.sleep_debt_min) : "\u2013"}
+              {sleepDebt != null ? fmtMins(sleepDebt) : "\u2013"}
             </div>
           </div>
         </div>
