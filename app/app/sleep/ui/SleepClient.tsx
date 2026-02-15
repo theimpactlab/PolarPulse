@@ -248,27 +248,56 @@ export default function SleepClient({
             {recentSleep.length > 0 && (
               <div className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-4 mt-3">
                 <div className="text-white/50 text-[10px] uppercase tracking-wider mb-3">Sleep Trends (7 Days)</div>
-                <div className="flex items-end justify-between gap-1 h-20">
-                  {recentSleep.map((sleep, idx) => {
-                    const score = sleep.score ?? 0;
-                    const height = (score / 100) * 100;
-                    const dateObj = new Date(sleep.date + "T00:00:00Z");
-                    const dayLabel = dateObj.toLocaleDateString("en-US", { weekday: "narrow" });
-                    const c = getSleepColor(score);
-                    return (
-                      <div key={idx} className="flex-1 flex flex-col items-center justify-end gap-1">
-                        <div
-                          className="w-full rounded-sm transition-all"
-                          style={{ height: `${Math.max(height, 4)}%`, backgroundColor: c }}
-                        />
-                        <div className="text-white/40 text-[9px]">{dayLabel}</div>
-                      </div>
-                    );
+                <svg viewBox="0 0 200 80" className="w-full h-20" preserveAspectRatio="none">
+                  <line x1="0" y1="20" x2="200" y2="20" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />
+                  <line x1="0" y1="40" x2="200" y2="40" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />
+                  <line x1="0" y1="60" x2="200" y2="60" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />
+                  <polyline
+                    fill="none"
+                    stroke="#60a5fa"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={recentSleep.map((s, i) => {
+                      const x = recentSleep.length === 1 ? 100 : (i / (recentSleep.length - 1)) * 196 + 2;
+                      const y = 76 - ((s.score ?? 0) / 100) * 72;
+                      return `${x},${y}`;
+                    }).join(" ")}
+                  />
+                  <polygon
+                    fill="url(#sleepFill)"
+                    opacity="0.15"
+                    points={[
+                      ...recentSleep.map((s, i) => {
+                        const x = recentSleep.length === 1 ? 100 : (i / (recentSleep.length - 1)) * 196 + 2;
+                        const y = 76 - ((s.score ?? 0) / 100) * 72;
+                        return `${x},${y}`;
+                      }),
+                      `${recentSleep.length === 1 ? 100 : 198},80`,
+                      "2,80"
+                    ].join(" ")}
+                  />
+                  {recentSleep.map((s, i) => {
+                    const x = recentSleep.length === 1 ? 100 : (i / (recentSleep.length - 1)) * 196 + 2;
+                    const y = 76 - ((s.score ?? 0) / 100) * 72;
+                    return <circle key={i} cx={x} cy={y} r="3" fill={getSleepColor(s.score)} />;
+                  })}
+                  <defs>
+                    <linearGradient id="sleepFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#60a5fa" />
+                      <stop offset="100%" stopColor="transparent" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <div className="flex justify-between mt-1">
+                  {recentSleep.map((s, i) => {
+                    const dt = new Date(s.date + "T00:00:00Z");
+                    const day = dt.toLocaleDateString("en-US", { weekday: "narrow" });
+                    return <div key={i} className="text-white/40 text-[9px] flex-1 text-center">{day}</div>;
                   })}
                 </div>
               </div>
-            )}
-          </>
+            )}          </>
         )}
       </div>
     </div>
