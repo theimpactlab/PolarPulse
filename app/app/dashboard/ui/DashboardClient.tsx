@@ -5,6 +5,7 @@ import { RingProgress } from "@/src/components/RingProgress";
 import { StrainCoach } from "@/src/components/StrainCoach";
 import { SleepCoach } from "@/src/components/SleepCoach";
 import Link from "next/link";
+import { PullToRefresh } from "@/src/components/PullToRefresh";
 
 type Row = {
   date: string;
@@ -137,6 +138,7 @@ export default function DashboardClient({
   const sleepDebt = today?.sleep_debt_min ?? [...rows].reverse().find(r => r.sleep_debt_min != null)?.sleep_debt_min ?? null;
 
   return (
+    <PullToRefresh>
     <div className="pb-28">
       {/* Date Header */}
       <div className="px-4 pt-2 pb-4">
@@ -278,5 +280,6 @@ export default function DashboardClient({
         </div>
       </div>
     </div>
+    </PullToRefresh>
   );
 }
