@@ -46,7 +46,7 @@ export default function ProfileClient({
   // Compute current age from DOB if set
   const currentAge = dob
     ? Math.floor((Date.now() - new Date(dob).getTime()) / 31557600000)
-    : userAge;
+    : 30;
 
   // Initials from name or email
   const initials = name
