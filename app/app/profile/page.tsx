@@ -21,28 +21,13 @@ export default async function ProfilePage() {
     .eq("id", userRes.user.id)
     .maybeSingle();
 
-  // Fetch last 30 days of daily metrics for healthspan calculation
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const { data: metricsRows } = await supabase
-    .from("daily_metrics")
-    .select("date,hrv_ms,resting_hr,sleep_needed_min,sleep_debt_min,sleep_score,steps,respiratory_rate")
-    .gte("date", thirtyDaysAgo.toISOString().split("T")[0])
-    .order("date", { ascending: false });
 
-  // Compute user age from DOB
-  const dob = profile?.date_of_birth;
-  const userAge = dob
-    ? Math.floor((Date.now() - new Date(dob).getTime()) / 31557600000)
-    : 30;
 
   return (
     <ProfileClient
       email={userRes.user.email ?? ""}
       userId={userRes.user.id}
       connection={connection}
-      dailyMetrics={metricsRows ?? []}
-      userAge={userAge}
       profileName={profile?.name ?? ""}
       profileDob={profile?.date_of_birth ?? ""}
       profileAvatarUrl={profile?.avatar_url ?? ""}
