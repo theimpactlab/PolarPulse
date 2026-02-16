@@ -20,19 +20,32 @@ export default async function SleepPage({
   const today = new Date();
   const yday = new Date(today);
   yday.setUTCDate(yday.getUTCDate() - 1);
-  const selectedDate =
-    typeof sp?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date)
-      ? sp.date
-      : iso(yday);
+  const hasExplicitDate = typeof sp?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date);
+  let selectedDate = hasExplicitDate ? sp.date! : iso(yday);
 
   // Main session
-  const { data: sessionRow } = await supabase
+  let { data: sessionRow } = await supabase
     .from("sleep_sessions")
     .select("id,sleep_start,sleep_end,duration_min,time_in_bed_min,efficiency_pct,sleep_score,sleep_date,avg_hr,min_hr,max_hr,avg_resp_rate,sleep_needed_min,sleep_debt_min,sleep_performance_pct,latency_min")
     .eq("sleep_date", selectedDate)
     .order("sleep_start", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  // Fallback: if no explicit date was given and no data for yesterday,
+  // show the most recent available sleep session instead of empty state
+  if (!sessionRow && !hasExplicitDate) {
+    const { data: latestRow } = await supabase
+      .from("sleep_sessions")
+      .select("id,sleep_start,sleep_end,duration_min,time_in_bed_min,efficiency_pct,sleep_score,sleep_date,avg_hr,min_hr,max_hr,avg_resp_rate,sleep_needed_min,sleep_debt_min,sleep_performance_pct,latency_min")
+      .order("sleep_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestRow) {
+      sessionRow = latestRow;
+      selectedDate = latestRow.sleep_date;
+    }
+  }
 
   if (!sessionRow) {
     return <SleepClient date={selectedDate} sleepScore={null} session={null} stages={[]} hrSeries={[]} recentSleep={[]} />;
