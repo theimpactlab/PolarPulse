@@ -68,8 +68,8 @@ function getDateDisplay(dateStr: string): string {
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
   const dateNorm = new Date(dateStr + "T00:00:00Z");
   dateNorm.setUTCHours(0, 0, 0, 0);
-  if (dateNorm.getTime() === today.getTime()) return "Tonight";
-  if (dateNorm.getTime() === yesterday.getTime()) return "Last Night";
+  // sleep_date = today means last night's sleep (Polar uses morning date)
+  if (dateNorm.getTime() === today.getTime()) return "Last Night";
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
