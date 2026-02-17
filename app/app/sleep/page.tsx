@@ -17,11 +17,14 @@ export default async function SleepPage({
     return <div className="text-white/80">Not signed in.</div>;
   }
 
+  // Polar's sleep_date convention: the date when sleep ends (i.e. the morning).
+  // "Last night" (the night leading into today) has sleep_date = today.
+  // Try today first; if no session exists, fall back to yesterday, then most recent.
   const today = new Date();
   const yday = new Date(today);
   yday.setUTCDate(yday.getUTCDate() - 1);
   const hasExplicitDate = typeof sp?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.date);
-  let selectedDate = hasExplicitDate ? sp.date! : iso(yday);
+  let selectedDate = hasExplicitDate ? sp.date! : iso(today);
 
   // Main session
   let { data: sessionRow } = await supabase
@@ -32,8 +35,21 @@ export default async function SleepPage({
     .limit(1)
     .maybeSingle();
 
-  // Fallback: if no explicit date was given and no data for yesterday,
-  // show the most recent available sleep session instead of empty state
+  // Fallback: if no explicit date was given and no data for today,
+  // try yesterday first, then show the most recent available sleep session
+  if (!sessionRow && !hasExplicitDate) {
+    const { data: ydayRow } = await supabase
+      .from("sleep_sessions")
+      .select("id,sleep_start,sleep_end,duration_min,time_in_bed_min,efficiency_pct,sleep_score,sleep_date,avg_hr,min_hr,max_hr,avg_resp_rate,sleep_needed_min,sleep_debt_min,sleep_performance_pct,latency_min")
+      .eq("sleep_date", iso(yday))
+      .order("sleep_start", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (ydayRow) {
+      sessionRow = ydayRow;
+      selectedDate = ydayRow.sleep_date;
+    }
+  }
   if (!sessionRow && !hasExplicitDate) {
     const { data: latestRow } = await supabase
       .from("sleep_sessions")
